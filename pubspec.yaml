@@ -1,0 +1,91 @@
+name: near
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # ✅ Profile photo picker
+  image_picker: ^1.1.2
+  
+  # ✅ Custom fonts for Near branding
+  google_fonts: ^6.2.1
+  
+  # ✅ Deep linking & routing
+  go_router: ^14.8.1
+  
+  # ✅ URL launcher for links
+  url_launcher: ^6.3.1
+  share_plus: ^12.0.1
+  
+  # ✅ Local storage & persistence
+  shared_preferences: ^2.3.5
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  
+  # ✅ Biometric authentication
+  local_auth: ^2.3.0
+  
+  # ✅ Network connectivity
+  connectivity_plus: ^6.1.4
+  
+  # ✅ Animations
+  lottie: ^3.3.1
+  supabase_flutter: ^2.12.0
+
+  # ✅ Audio recording for voice messages (4.3)
+  record: ^5.2.1
+  
+  # ✅ Audio playback for voice messages (4.3)
+  just_audio: ^0.9.40
+  
+  # ✅ File picker for documents (4.4)
+  file_picker: ^8.1.3
+  
+  # ✅ Path provider for temp files
+  path_provider: ^2.1.5
+  
+  # ✅ QR code scanning (2.7) - mobile_scanner daha güncel
+  mobile_scanner: ^5.1.1
+  
+  # ✅ QR code generation
+  qr_flutter: ^4.1.0
+  
+  # ✅ Location services (4.9)
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
+  
+  # ✅ Contact picker (4.10)
+  flutter_contacts: ^1.1.9+2
+  
+  # ✅ Permission handler for location/contacts
+  permission_handler: ^11.3.1
+  
+  # ✅ HTTP for API calls (GIF/Tenor)
+  http: ^1.2.2
+  
+  # ✅ Video player for video messages (4.2)
+  video_player: ^2.9.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+# Fix record_linux dependency issue
+dependency_overrides:
+  record_linux: ^1.2.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+
