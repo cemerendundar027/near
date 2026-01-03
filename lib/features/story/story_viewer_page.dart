@@ -1,6 +1,7 @@
 // lib/features/story/story_viewer_page.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart';
 import '../../app/theme.dart';
 import '../../shared/story_service.dart';
@@ -89,7 +90,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
 
     if (_userStoriesList.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.pop(context);
+        if (mounted) _safeGoBack();
       });
       return;
     }
@@ -198,7 +199,20 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
     }
 
     // Tüm story'ler bitti
-    Navigator.pop(context);
+    _safeGoBack();
+  }
+  
+  /// Güvenli geri dönüş - go_router stack kontrolü ile
+  void _safeGoBack() {
+    if (!mounted) return;
+    
+    // go_router ile güvenli geri dönüş
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      // Stack boşsa ana sayfaya git
+      context.go('/');
+    }
   }
 
   void _disposeVideoController() {
@@ -360,7 +374,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                     Row(
                       children: [
                         IconButton(
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: _safeGoBack,
                           icon: const Icon(
                             Icons.close_rounded,
                             color: Colors.white,

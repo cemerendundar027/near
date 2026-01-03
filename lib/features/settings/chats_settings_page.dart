@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../app/app_settings.dart';
 import '../../shared/settings_widgets.dart';
 import '../../shared/settings_service.dart';
+import '../../shared/chat_service.dart';
 
 class ChatsSettingsPage extends StatefulWidget {
   static const route = '/settings/chats';
@@ -16,6 +17,7 @@ class ChatsSettingsPage extends StatefulWidget {
 
 class _ChatsSettingsPageState extends State<ChatsSettingsPage> {
   final _settingsService = SettingsService.instance;
+  final _chatService = ChatService.instance;
 
   String _modeLabel(NearThemeMode m) {
     switch (m) {
@@ -52,17 +54,22 @@ class _ChatsSettingsPageState extends State<ChatsSettingsPage> {
   void _showExportChatDialog() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    final chats = [
-      {'name': 'Aile Grubu', 'messageCount': 1240},
-      {'name': 'İş Arkadaşları', 'messageCount': 856},
-      {'name': 'Cem Yılmaz', 'messageCount': 432},
-      {'name': 'Ayşe Demir', 'messageCount': 128},
-    ];
+    // Gerçek sohbet listesini al
+    final chats = _chatService.chats;
+    
+    if (chats.isEmpty) {
+      _toast('Dışa aktarılacak sohbet bulunamadı');
+      return;
+    }
     
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -91,36 +98,45 @@ class _ChatsSettingsPageState extends State<ChatsSettingsPage> {
                   ),
                 ),
               ),
-              ...chats.map((chat) => ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: NearTheme.primary.withAlpha(30),
-                  child: Icon(
-                    chat['name'].toString().contains('Grubu') || chat['name'].toString().contains('Arkadaş')
-                        ? Icons.group_rounded
-                        : Icons.person_rounded,
-                    color: NearTheme.primary,
-                  ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: chats.length,
+                  itemBuilder: (ctx, index) {
+                    final chat = chats[index];
+                    final isGroup = chat['is_group'] == true;
+                    final chatName = _chatService.getChatName(chat);
+                    
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: NearTheme.primary.withAlpha(30),
+                        child: Icon(
+                          isGroup ? Icons.group_rounded : Icons.person_rounded,
+                          color: NearTheme.primary,
+                        ),
+                      ),
+                      title: Text(
+                        chatName,
+                        style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                      ),
+                      subtitle: Text(
+                        isGroup ? 'Grup sohbeti' : 'Bireysel sohbet',
+                        style: TextStyle(
+                          color: isDark ? Colors.white54 : Colors.black54,
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right,
+                        color: isDark ? Colors.white38 : Colors.black38,
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _exportChat(chatName);
+                      },
+                    );
+                  },
                 ),
-                title: Text(
-                  chat['name'] as String,
-                  style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-                ),
-                subtitle: Text(
-                  '${chat['messageCount']} mesaj',
-                  style: TextStyle(
-                    color: isDark ? Colors.white54 : Colors.black54,
-                    fontSize: 12,
-                  ),
-                ),
-                trailing: Icon(
-                  Icons.chevron_right,
-                  color: isDark ? Colors.white38 : Colors.black38,
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _exportChat(chat['name'] as String);
-                },
-              )),
+              ),
               const SizedBox(height: 16),
             ],
           ),

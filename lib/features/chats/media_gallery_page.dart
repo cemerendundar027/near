@@ -267,17 +267,41 @@ class _MediaGalleryPageState extends State<MediaGalleryPage>
       itemBuilder: (context, index) {
         final photo = _photos[index];
         return GestureDetector(
-          onTap: () => _showSnackBar('Fotoğraf önizlemesi'),
+          onTap: () => _openPhotoViewer(photo),
           child: Container(
             color: NearTheme.primary.withAlpha(50),
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Icon(
-                  Icons.photo_rounded,
-                  size: 40,
-                  color: NearTheme.primary.withAlpha(100),
-                ),
+                // Gerçek fotoğraf önizlemesi
+                if (photo.url != null)
+                  Image.network(
+                    photo.url!,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) => Icon(
+                      Icons.broken_image_rounded,
+                      size: 40,
+                      color: NearTheme.primary.withAlpha(100),
+                    ),
+                  )
+                else
+                  Icon(
+                    Icons.photo_rounded,
+                    size: 40,
+                    color: NearTheme.primary.withAlpha(100),
+                  ),
                 Positioned(
                   bottom: 4,
                   right: 4,
@@ -301,6 +325,20 @@ class _MediaGalleryPageState extends State<MediaGalleryPage>
           ),
         );
       },
+    );
+  }
+
+  void _openPhotoViewer(MediaItem photo) {
+    if (photo.url == null) return;
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullScreenPhotoViewer(
+          imageUrl: photo.url!,
+          date: photo.date,
+        ),
+      ),
     );
   }
 
@@ -702,4 +740,93 @@ class LinkItem {
     this.description,
     required this.date,
   });
+}
+
+/// Tam ekran fotoğraf görüntüleyici
+class _FullScreenPhotoViewer extends StatelessWidget {
+  final String imageUrl;
+  final DateTime date;
+
+  const _FullScreenPhotoViewer({
+    required this.imageUrl,
+    required this.date,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withAlpha(180),
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          _formatDate(date),
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share_rounded),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Paylaşım yakında eklenecek')),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('İndirme yakında eklenecek')),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: Image.network(
+            imageUrl,
+            fit: BoxFit.contain,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                  color: Colors.white,
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) => Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.broken_image_rounded, size: 64, color: Colors.white54),
+                const SizedBox(height: 16),
+                const Text(
+                  'Fotoğraf yüklenemedi',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    final day = dt.day.toString().padLeft(2, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    final year = dt.year;
+    final hour = dt.hour.toString().padLeft(2, '0');
+    final minute = dt.minute.toString().padLeft(2, '0');
+    return '$day.$month.$year $hour:$minute';
+  }
 }

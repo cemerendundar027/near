@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/theme.dart';
 import '../../shared/settings_widgets.dart';
+import '../../shared/auth_service.dart';
 
 class AccountPage extends StatefulWidget {
   static const route = '/settings/account';
@@ -11,8 +13,48 @@ class AccountPage extends StatefulWidget {
 }
 
 class _AccountPageState extends State<AccountPage> {
+  final _supabase = Supabase.instance.client;
+  final _auth = AuthService.instance;
+  
   bool _twoStepEnabled = false;
   bool _fingerprintEnabled = true;
+  bool _isLoading = true;
+  
+  String _email = '';
+  String _phone = '';
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadAccountInfo();
+  }
+  
+  Future<void> _loadAccountInfo() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user != null) {
+        // Profil bilgilerini al
+        final profile = await _supabase
+            .from('profiles')
+            .select('phone')
+            .eq('id', user.id)
+            .maybeSingle();
+        
+        if (mounted) {
+          setState(() {
+            _email = user.email ?? '';
+            _phone = profile?['phone'] ?? '';
+            _isLoading = false;
+          });
+        }
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint('Error loading account info: $e');
+      setState(() => _isLoading = false);
+    }
+  }
 
   void _toast(String msg) {
     ScaffoldMessenger.of(context)
@@ -30,7 +72,7 @@ class _AccountPageState extends State<AccountPage> {
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
@@ -41,20 +83,21 @@ class _AccountPageState extends State<AccountPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Mevcut numara: +90 5XX XXX XX XX',
-              style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54,
-                fontSize: 13,
+            if (_phone.isNotEmpty)
+              Text(
+                'Mevcut numara: $_phone',
+                style: TextStyle(
+                  color: isDark ? Colors.white54 : Colors.black54,
+                  fontSize: 13,
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: phoneController,
               keyboardType: TextInputType.phone,
               decoration: InputDecoration(
-                labelText: 'Yeni Telefon Numarası',
-                prefixText: '+90 ',
+                labelText: 'Telefon Numarası',
+                hintText: '+90 5XX XXX XX XX',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -64,29 +107,39 @@ class _AccountPageState extends State<AccountPage> {
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              'SMS ile doğrulama kodu gönderilecektir.',
-              style: TextStyle(
-                fontSize: 12,
-                color: isDark ? Colors.white38 : Colors.black38,
-              ),
-            ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: Text('İptal', style: TextStyle(color: NearTheme.primary)),
           ),
           TextButton(
-            onPressed: () {
-              if (phoneController.text.isNotEmpty) {
-                Navigator.pop(context);
-                _showVerificationDialog('telefon');
+            onPressed: () async {
+              final phone = phoneController.text.trim();
+              if (phone.isEmpty) {
+                _toast('Lütfen telefon numarası girin');
+                return;
+              }
+              
+              Navigator.pop(ctx);
+              
+              try {
+                final userId = _supabase.auth.currentUser?.id;
+                if (userId != null) {
+                  await _supabase.from('profiles').update({
+                    'phone': phone,
+                    'updated_at': DateTime.now().toIso8601String(),
+                  }).eq('id', userId);
+                  
+                  setState(() => _phone = phone);
+                  _toast('Telefon numarası güncellendi ✓');
+                }
+              } catch (e) {
+                _toast('Güncelleme başarısız: ${e.toString()}');
               }
             },
-            child: Text('Devam', style: TextStyle(color: NearTheme.primary)),
+            child: Text('Kaydet', style: TextStyle(color: NearTheme.primary)),
           ),
         ],
       ),
@@ -99,7 +152,7 @@ class _AccountPageState extends State<AccountPage> {
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
@@ -110,13 +163,14 @@ class _AccountPageState extends State<AccountPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Mevcut e-posta: cem@example.com',
-              style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54,
-                fontSize: 13,
+            if (_email.isNotEmpty)
+              Text(
+                'Mevcut e-posta: $_email',
+                style: TextStyle(
+                  color: isDark ? Colors.white54 : Colors.black54,
+                  fontSize: 13,
+                ),
               ),
-            ),
             const SizedBox(height: 16),
             TextField(
               controller: emailController,
@@ -134,7 +188,7 @@ class _AccountPageState extends State<AccountPage> {
             ),
             const SizedBox(height: 12),
             Text(
-              'E-posta ile doğrulama linki gönderilecektir.',
+              'E-posta değişikliği için doğrulama maili gönderilecektir.',
               style: TextStyle(
                 fontSize: 12,
                 color: isDark ? Colors.white38 : Colors.black38,
@@ -144,84 +198,29 @@ class _AccountPageState extends State<AccountPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: Text('İptal', style: TextStyle(color: NearTheme.primary)),
           ),
           TextButton(
-            onPressed: () {
-              if (emailController.text.isNotEmpty && emailController.text.contains('@')) {
-                Navigator.pop(context);
-                _showVerificationDialog('e-posta');
+            onPressed: () async {
+              final newEmail = emailController.text.trim();
+              if (newEmail.isEmpty || !newEmail.contains('@')) {
+                _toast('Lütfen geçerli bir e-posta girin');
+                return;
+              }
+              
+              Navigator.pop(ctx);
+              
+              try {
+                await _supabase.auth.updateUser(
+                  UserAttributes(email: newEmail),
+                );
+                _toast('Doğrulama e-postası gönderildi. Lütfen kontrol edin.');
+              } catch (e) {
+                _toast('E-posta değiştirilemedi: ${e.toString()}');
               }
             },
-            child: Text('Devam', style: TextStyle(color: NearTheme.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showVerificationDialog(String type) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final codeController = TextEditingController();
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Doğrulama Kodu',
-          style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              type == 'telefon' 
-                  ? 'Yeni numaranıza gönderilen 6 haneli kodu girin.'
-                  : 'Yeni e-postanıza gönderilen 6 haneli kodu girin.',
-              style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: codeController,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 24,
-                letterSpacing: 8,
-                fontWeight: FontWeight.bold,
-              ),
-              decoration: InputDecoration(
-                counterText: '',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: NearTheme.primary, width: 2),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('İptal', style: TextStyle(color: NearTheme.primary)),
-          ),
-          TextButton(
-            onPressed: () {
-              if (codeController.text.length == 6) {
-                Navigator.pop(context);
-                _toast(type == 'telefon' ? 'Telefon numarası güncellendi' : 'E-posta güncellendi');
-              }
-            },
-            child: Text('Doğrula', style: TextStyle(color: NearTheme.primary)),
+            child: Text('Gönder', style: TextStyle(color: NearTheme.primary)),
           ),
         ],
       ),
@@ -308,8 +307,8 @@ class _AccountPageState extends State<AccountPage> {
                 SettingsTile(
                   icon: Icons.phone_iphone_rounded,
                   iconBackgroundColor: SettingsColors.teal,
-                  title: 'Change Number',
-                  subtitle: '+90 5XX XXX XX XX',
+                  title: 'Telefon Numarası',
+                  subtitle: _phone.isNotEmpty ? _phone : 'Telefon numarası eklenmemiş',
                   onTap: _showChangePhoneDialog,
                 ),
               ],
@@ -328,16 +327,16 @@ class _AccountPageState extends State<AccountPage> {
                 SettingsTile(
                   icon: Icons.email_rounded,
                   iconBackgroundColor: SettingsColors.purple,
-                  title: 'Email',
-                  subtitle: 'cem@example.com',
+                  title: 'E-posta',
+                  subtitle: _email.isNotEmpty ? _email : 'E-posta bulunamadı',
                   onTap: _showChangeEmailDialog,
                 ),
                 _divider(isDark),
                 SettingsTile(
                   icon: Icons.devices_rounded,
                   iconBackgroundColor: SettingsColors.gray,
-                  title: 'Active Sessions',
-                  subtitle: '2 cihazda aktif',
+                  title: 'Aktif Oturumlar',
+                  subtitle: 'Bu cihazda aktif',
                   onTap: () => _showActiveSessions(),
                 ),
               ],
@@ -377,40 +376,80 @@ class _AccountPageState extends State<AccountPage> {
       );
 
   void _showChangePasswordDialog() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Change Password', style: TextStyle(fontWeight: FontWeight.w700)),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        title: Text(
+          'Şifre Değiştir',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
+              controller: newPasswordController,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Current Password'),
+              decoration: InputDecoration(
+                labelText: 'Yeni Şifre',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
+              controller: confirmPasswordController,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'New Password'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Confirm New Password'),
+              decoration: InputDecoration(
+                labelText: 'Yeni Şifre (Tekrar)',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('İptal', style: TextStyle(color: NearTheme.primary)),
           ),
           FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _toast('Şifre değiştirildi ✓');
+            onPressed: () async {
+              final newPassword = newPasswordController.text.trim();
+              final confirmPassword = confirmPasswordController.text.trim();
+              
+              if (newPassword.isEmpty || confirmPassword.isEmpty) {
+                _toast('Lütfen tüm alanları doldurun');
+                return;
+              }
+              
+              if (newPassword.length < 6) {
+                _toast('Şifre en az 6 karakter olmalı');
+                return;
+              }
+              
+              if (newPassword != confirmPassword) {
+                _toast('Şifreler eşleşmiyor');
+                return;
+              }
+              
+              Navigator.pop(ctx);
+              
+              try {
+                await _supabase.auth.updateUser(
+                  UserAttributes(password: newPassword),
+                );
+                _toast('Şifre başarıyla değiştirildi ✓');
+              } catch (e) {
+                _toast('Şifre değiştirilemedi: ${e.toString()}');
+              }
             },
-            child: const Text('Change'),
+            child: const Text('Değiştir'),
           ),
         ],
       ),
@@ -494,23 +533,73 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   void _showDeleteAccountDialog() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final confirmController = TextEditingController();
+    
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete Account', style: TextStyle(fontWeight: FontWeight.w700, color: SettingsColors.red)),
-        content: const Text('Bu işlem geri alınamaz. Tüm verileriniz silinecek. Emin misiniz?'),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        title: const Text(
+          'Hesabı Sil',
+          style: TextStyle(fontWeight: FontWeight.w700, color: SettingsColors.red),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Bu işlem geri alınamaz! Tüm verileriniz kalıcı olarak silinecek:',
+              style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '• Mesajlarınız\n• Sohbetleriniz\n• Profil bilgileriniz\n• Medya dosyalarınız',
+              style: TextStyle(
+                fontSize: 13,
+                color: isDark ? Colors.white54 : Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: confirmController,
+              decoration: InputDecoration(
+                labelText: 'Onaylamak için "SİL" yazın',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('İptal', style: TextStyle(color: NearTheme.primary)),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: SettingsColors.red),
-            onPressed: () {
-              Navigator.pop(context);
-              _toast('Hesap silme isteği alındı');
+            onPressed: () async {
+              if (confirmController.text.trim().toUpperCase() != 'SİL') {
+                _toast('Lütfen "SİL" yazarak onaylayın');
+                return;
+              }
+              
+              Navigator.pop(ctx);
+              _toast('Hesabınız silinmek üzere işaretlendi. Kısa süre içinde çıkış yapılacak.');
+              
+              // Hesabı sil (profil + auth)
+              try {
+                final userId = _supabase.auth.currentUser?.id;
+                if (userId != null) {
+                  // Önce profili sil
+                  await _supabase.from('profiles').delete().eq('id', userId);
+                }
+                // Oturumu kapat
+                await _supabase.auth.signOut();
+              } catch (e) {
+                debugPrint('Error deleting account: $e');
+              }
             },
-            child: const Text('Delete'),
+            child: const Text('Hesabı Sil'),
           ),
         ],
       ),

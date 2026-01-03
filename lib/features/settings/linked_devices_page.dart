@@ -17,30 +17,9 @@ class _LinkedDevicesPageState extends State<LinkedDevicesPage>
     with SingleTickerProviderStateMixin {
   late AnimationController _scanAnimController;
 
-  // Mock data - bağlı cihazlar
-  final List<LinkedDevice> _devices = [
-    LinkedDevice(
-      id: 'd1',
-      name: 'MacBook Pro',
-      type: DeviceType.desktop,
-      lastActive: DateTime.now().subtract(const Duration(minutes: 5)),
-      isCurrentDevice: false,
-    ),
-    LinkedDevice(
-      id: 'd2',
-      name: 'Chrome - Windows',
-      type: DeviceType.web,
-      lastActive: DateTime.now().subtract(const Duration(hours: 2)),
-      isCurrentDevice: false,
-    ),
-    LinkedDevice(
-      id: 'd3',
-      name: 'iPad Air',
-      type: DeviceType.tablet,
-      lastActive: DateTime.now().subtract(const Duration(days: 1)),
-      isCurrentDevice: false,
-    ),
-  ];
+  // Gerçek bağlı cihazlar listesi - yakında eklenecek
+  final List<LinkedDevice> _devices = [];
+  // Not: Multi-device desteği yakında eklenecek
 
   @override
   void initState() {

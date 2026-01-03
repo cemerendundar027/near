@@ -90,40 +90,40 @@ class _StarredMessagesPageState extends State<StarredMessagesPage> {
               child: CircularProgressIndicator(color: NearTheme.primary),
             )
           : _starredMessages.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.star_outline,
-                        size: 64,
-                        color: isDark ? Colors.white38 : Colors.black26,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Yıldızlı mesaj yok',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: isDark ? Colors.white54 : Colors.black45,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Önemli mesajları yıldızlayarak\nburadan ulaşabilirsiniz',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isDark ? Colors.white38 : Colors.black38,
-                        ),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.star_outline,
+                    size: 64,
+                    color: isDark ? Colors.white38 : Colors.black26,
                   ),
-                )
+                  const SizedBox(height: 16),
+                  Text(
+                    'Yıldızlı mesaj yok',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: isDark ? Colors.white54 : Colors.black45,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Önemli mesajları yıldızlayarak\nburadan ulaşabilirsiniz',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDark ? Colors.white38 : Colors.black38,
+                    ),
+                  ),
+                ],
+              ),
+            )
               : RefreshIndicator(
                   onRefresh: _loadStarredMessages,
                   child: ListView.builder(
-                    itemCount: _starredMessages.length,
-                    itemBuilder: (context, index) {
+              itemCount: _starredMessages.length,
+              itemBuilder: (context, index) {
                       final starred = _starredMessages[index];
                       final message = starred['message'] as Map<String, dynamic>?;
                       if (message == null) return const SizedBox.shrink();
@@ -149,7 +149,7 @@ class _StarredMessagesPageState extends State<StarredMessagesPage> {
                       );
                     },
                   ),
-                ),
+            ),
     );
   }
 }
@@ -233,70 +233,70 @@ class _StarredMessageTile extends StatelessWidget {
       ),
       onDismissed: (_) => onUnstar?.call(),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: InkWell(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 16,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 16,
                       backgroundColor: NearTheme.primary,
-                      child: Text(
+                    child: Text(
                         senderName.isNotEmpty ? senderName[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                             senderName,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                              color: isDark ? Colors.white : Colors.black87,
-                            ),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: isDark ? Colors.white : Colors.black87,
                           ),
-                          Text(
+                        ),
+                        Text(
                             chatName,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: isDark ? Colors.white54 : Colors.black45,
-                            ),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? Colors.white54 : Colors.black45,
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
+                  ),
                     const Icon(Icons.star, size: 16, color: Colors.amber),
-                    const SizedBox(width: 4),
-                    Text(
+                  const SizedBox(width: 4),
+                  Text(
                       timestamp,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isDark ? Colors.white54 : Colors.black45,
-                      ),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white54 : Colors.black45,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // Content
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Content
                 Row(
                   children: [
                     if (type != 'text') ...[
@@ -312,13 +312,13 @@ class _StarredMessageTile extends StatelessWidget {
                         _getDisplayContent(),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isDark ? Colors.white70 : Colors.black87,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark ? Colors.white70 : Colors.black87,
                         ),
-                      ),
-                    ),
-                  ],
+                ),
+              ),
+            ],
                 ),
               ],
             ),

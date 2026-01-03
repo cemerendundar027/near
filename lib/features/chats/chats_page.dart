@@ -6,6 +6,7 @@ import '../../shared/chat_store.dart';
 import '../../shared/chat_service.dart';
 import '../../shared/models.dart';
 import '../../shared/story_service.dart';
+import '../../shared/mood_aura.dart';
 import '../../shared/widgets/swipe_actions.dart';
 import '../../shared/widgets/shimmer_loading.dart';
 import 'chat_extras_pages.dart';
@@ -576,7 +577,7 @@ class _ChatsPageState extends State<ChatsPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return ListenableBuilder(
-      listenable: store,
+      listenable: Listenable.merge([store, chatService]),
       builder: (_, _) {
         final q = _query.trim().toLowerCase();
         final all = store.chats
@@ -839,11 +840,22 @@ class _ChatsPageState extends State<ChatsPage> {
                   : SliverList(
                       delegate: SliverChildBuilderDelegate((context, i) {
                         final chat = chats[i];
-                        final unread = store.unreadCount(chat.id);
+                        // Önce ChatService'den unread count al, yoksa store'dan
+                        final unread = chatService.getCachedUnreadCount(chat.id) > 0 
+                            ? chatService.getCachedUnreadCount(chat.id)
+                            : store.unreadCount(chat.id);
                         final typing = store.isTyping(chat.id);
                         final pinned = store.isPinned(chat.id);
                         final muted = store.isMuted(chat.userId);
-                        final online = store.presenceOf(chat.userId).online;
+                        
+                        // Online durumunu Supabase'den al (last_seen'e göre)
+                        final supabaseChat = chatService.chats.firstWhere(
+                          (c) => c['id'] == chat.id,
+                          orElse: () => <String, dynamic>{},
+                        );
+                        final online = supabaseChat.isNotEmpty 
+                            ? chatService.isOtherUserOnline(supabaseChat)
+                            : store.presenceOf(chat.userId).online;
 
                         return SwipeableChatTile(
                           isPinned: pinned,
@@ -874,6 +886,7 @@ class _ChatsPageState extends State<ChatsPage> {
                           },
                           child: _ChatTile(
                             chat: chat,
+                            supabaseChat: supabaseChat,
                             unread: unread,
                             typing: typing,
                             pinned: pinned,
@@ -1206,6 +1219,7 @@ class _StoryBubble extends StatelessWidget {
 // Chat Tile
 class _ChatTile extends StatelessWidget {
   final ChatPreview chat;
+  final Map<String, dynamic>? supabaseChat;
   final int unread;
   final bool typing;
   final bool pinned;
@@ -1216,6 +1230,7 @@ class _ChatTile extends StatelessWidget {
 
   const _ChatTile({
     required this.chat,
+    this.supabaseChat,
     required this.unread,
     required this.typing,
     required this.pinned,
@@ -1237,41 +1252,8 @@ class _ChatTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            // Avatar
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: isDark
-                      ? Colors.white12
-                      : Colors.grey.shade300,
-                  child: Icon(
-                    Icons.person,
-                    size: 28,
-                    color: isDark ? Colors.white54 : Colors.grey.shade600,
-                  ),
-                ),
-                if (online)
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF25D366),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: isDark
-                              ? const Color(0xFF000000)
-                              : Colors.white,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            // Avatar with Mood Aura
+            _buildAvatarWithAura(isDark),
             const SizedBox(width: 14),
             // Content
             Expanded(
@@ -1309,34 +1291,21 @@ class _ChatTile extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: Row(
-                          children: [
-                            if (!typing)
-                              Icon(
-                                Icons.done_all,
-                                size: 16,
-                                color: NearTheme.primary.withAlpha(180),
-                              ),
-                            if (!typing) const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                typing ? 'yazıyor...' : chat.lastMessage,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: typing
-                                      ? NearTheme.primary
-                                      : (isDark
-                                            ? Colors.white54
-                                            : Colors.black54),
-                                  fontWeight: unread > 0
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          typing ? 'yazıyor...' : chat.lastMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: typing
+                                ? NearTheme.primary
+                                : (isDark
+                                      ? Colors.white54
+                                      : Colors.black54),
+                            fontWeight: unread > 0
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
                         ),
                       ),
                       if (muted)
@@ -1385,6 +1354,83 @@ class _ChatTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Avatar with Mood Aura Premium Effect
+  Widget _buildAvatarWithAura(bool isDark) {
+    // Supabase chat'ten diğer kullanıcının bilgilerini al
+    final isGroup = supabaseChat?['is_group'] == true;
+    String? avatarUrl;
+    MoodAura mood = MoodAura.none;
+
+    if (!isGroup && supabaseChat != null) {
+      // 1:1 sohbette diğer kullanıcının bilgilerini al
+      final participants = supabaseChat!['chat_participants'] as List?;
+      final chatService = ChatService.instance;
+      final currentUserId = chatService.currentUserId;
+
+      if (participants != null) {
+        for (final p in participants) {
+          final profile = p['profiles'] as Map<String, dynamic>?;
+          if (profile != null && profile['id'] != currentUserId) {
+            avatarUrl = profile['avatar_url'] as String?;
+            mood = MoodAura.fromString(profile['mood_aura'] as String?);
+            break;
+          }
+        }
+      }
+    } else if (isGroup) {
+      avatarUrl = supabaseChat?['avatar_url'] as String?;
+    }
+
+    // Avatar widget
+    final avatarWidget = CircleAvatar(
+      radius: 28,
+      backgroundColor: isDark ? Colors.white12 : Colors.grey.shade300,
+      backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+          ? NetworkImage(avatarUrl)
+          : null,
+      child: avatarUrl == null || avatarUrl.isEmpty
+          ? Icon(
+              isGroup ? Icons.group : Icons.person,
+              size: 28,
+              color: isDark ? Colors.white54 : Colors.grey.shade600,
+            )
+          : null,
+    );
+
+    // Stack for online indicator
+    return Stack(
+      children: [
+        // Mood Aura wrapped avatar
+        if (mood != MoodAura.none)
+          MoodAuraWidget(
+            mood: mood,
+            size: 56,
+            child: avatarWidget,
+          )
+        else
+          avatarWidget,
+        // Online indicator
+        if (online)
+          Positioned(
+            right: mood != MoodAura.none ? 4 : 0,
+            bottom: mood != MoodAura.none ? 4 : 0,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                color: const Color(0xFF25D366),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: isDark ? const Color(0xFF000000) : Colors.white,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

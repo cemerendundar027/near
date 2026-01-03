@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/theme.dart';
 import '../../shared/chat_service.dart';
 import '../chats/media_gallery_page.dart';
@@ -38,6 +39,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
   bool _isMuted = false;
   bool _isLoading = true;
 
+  // Canlı online durumu takibi
+  final _store = ChatStore.instance;
+  StreamSubscription? _presenceSubscription;
+
   // Supabase'den yüklenen ortak gruplar
   List<CommonGroup> _commonGroups = [];
   
@@ -53,6 +58,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
   Future<void> _loadData() async {
     try {
       final chatService = ChatService.instance;
+      
+      // Canlı online durumunu yükle
+      _initPresence();
       
       // Ortak grupları yükle
       final groups = await chatService.getCommonGroups(widget.userId);
@@ -72,6 +80,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
         setState(() => _isLoading = false);
       }
     }
+  }
+  
+  void _initPresence() {
+    _presenceSubscription?.cancel();
+    _presenceSubscription = ChatService.instance.subscribeToPresence(widget.userId);
+  }
+  
+  @override
+  void dispose() {
+    _presenceSubscription?.cancel();
+    super.dispose();
   }
 
   void _showSnackBar(String message) {
@@ -618,83 +637,91 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                   // Profile content
                   SafeArea(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const SizedBox(height: 40),
-                        // Avatar
-                        Stack(
+                    child: ListenableBuilder(
+                      listenable: _store,
+                      builder: (context, _) {
+                        final presence = _store.presenceOf(widget.userId);
+                        final lastSeenStr = ChatService.instance.formatLastSeen(presence.lastSeenAt);
+                        
+                        return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Container(
-                              width: 110,
-                              height: 110,
-                              decoration: BoxDecoration(
-                                color: Colors.white24,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 4,
-                                ),
-                              ),
-                              child: Icon(
-                                Icons.person_rounded,
-                                size: 60,
-                                color: Colors.white,
-                              ),
-                            ),
-                            if (widget.isOnline)
-                              Positioned(
-                                right: 8,
-                                bottom: 8,
-                                child: Container(
-                                  width: 24,
-                                  height: 24,
+                            const SizedBox(height: 40),
+                            // Avatar
+                            Stack(
+                              children: [
+                                Container(
+                                  width: 110,
+                                  height: 110,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF25D366),
+                                    color: Colors.white24,
                                     shape: BoxShape.circle,
                                     border: Border.all(
                                       color: Colors.white,
-                                      width: 3,
+                                      width: 4,
                                     ),
                                   ),
+                                  child: const Icon(
+                                    Icons.person_rounded,
+                                    size: 60,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                if (presence.online)
+                                  Positioned(
+                                    right: 8,
+                                    bottom: 8,
+                                    child: Container(
+                                      width: 24,
+                                      height: 24,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF25D366),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white,
+                                          width: 3,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            // Name
+                            Text(
+                              widget.userName,
+                              style: const TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            // Phone
+                            if (widget.userPhone != null)
+                              Text(
+                                widget.userPhone!,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  color: Colors.white70,
                                 ),
                               ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        // Name
-                        Text(
-                          widget.userName,
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        // Phone
-                        if (widget.userPhone != null)
-                          Text(
-                            widget.userPhone!,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: Colors.white70,
+                            const SizedBox(height: 4),
+                            // Online status - canlı değeri kullan
+                            Text(
+                              presence.online 
+                                  ? 'Çevrimiçi' 
+                                  : (lastSeenStr.isEmpty ? 'Son görülme yakın zamanda' : 'Son görülme $lastSeenStr'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: presence.online
+                                    ? const Color(0xFF25D366)
+                                    : Colors.white54,
+                              ),
                             ),
-                          ),
-                        const SizedBox(height: 4),
-                        // Online status
-                        Text(
-                          widget.isOnline
-                              ? 'Çevrimiçi'
-                              : 'Son görülme yakın zamanda',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: widget.isOnline
-                                ? const Color(0xFF25D366)
-                                : Colors.white54,
-                          ),
-                        ),
-                      ],
+                          ],
+                        );
+                      }
                     ),
                   ),
                 ],

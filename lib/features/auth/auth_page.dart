@@ -163,11 +163,20 @@ class _AuthPageState extends State<AuthPage>
       setState(() => _isLoading = false);
 
       if (response.user != null) {
-        if (_isLogin) {
-          context.go('/');
-        } else {
-          // Yeni kayıt - profil oluştur
+        // Profil kurulumu yapılmış mı kontrol et
+        final profile = await _auth.getCurrentProfile();
+        debugPrint('AUTH: Profile check - profile: $profile');
+        debugPrint('AUTH: full_name value: ${profile?['full_name']}');
+        if (!mounted) return;
+        
+        // full_name null veya boş ise profil kurulumu göster
+        // (Supabase trigger otomatik username atıyor, ama full_name boş kalıyor)
+        final fullName = profile?['full_name'] as String?;
+        if (profile == null || fullName == null || fullName.isEmpty) {
+          // Profil kurulumu yapılmamış - isim ve kullanıcı adı belirle
           _showProfileSetup();
+        } else {
+          context.go('/');
         }
       }
     } catch (e) {
@@ -175,6 +184,61 @@ class _AuthPageState extends State<AuthPage>
       setState(() => _isLoading = false);
       _toast(_auth.getErrorMessage(e));
     }
+  }
+
+  void _showEmailVerificationDialog(String email) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Email Doğrulama'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.email_outlined, size: 64, color: Colors.blue),
+            const SizedBox(height: 16),
+            Text(
+              '$email adresine doğrulama maili gönderildi.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Lütfen emailinizdeki linke tıklayarak hesabınızı doğrulayın, ardından tekrar giriş yapın.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              // Doğrulama emailini tekrar gönder
+              try {
+                await _auth.resendVerificationEmail(email);
+                if (!ctx.mounted) return;
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Doğrulama maili tekrar gönderildi')),
+                );
+              } catch (e) {
+                if (!ctx.mounted) return;
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('Hata: ${e.toString()}')),
+                );
+              }
+            },
+            child: const Text('Tekrar Gönder'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // Çıkış yap ki tekrar giriş yapabilsin
+              _auth.signOut();
+            },
+            child: const Text('Tamam'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showProfileSetup() {
@@ -781,10 +845,14 @@ class _ProfileSetupSheetState extends State<_ProfileSetupSheet> {
     });
 
     try {
+      final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+      
+      // Kendi id'miz hariç başka biri bu username'i kullanıyor mu?
       final result = await Supabase.instance.client
           .from('profiles')
           .select('id')
           .eq('username', username)
+          .neq('id', currentUserId ?? '')
           .maybeSingle();
 
       if (!mounted) return;
@@ -803,9 +871,12 @@ class _ProfileSetupSheetState extends State<_ProfileSetupSheet> {
         });
       }
     } catch (e) {
+      debugPrint('Username check error: $e');
       if (!mounted) return;
       setState(() {
         _isCheckingUsername = false;
+        // Hata durumunda da devam etsin
+        _usernameAvailable = true;
       });
     }
   }
@@ -838,23 +909,29 @@ class _ProfileSetupSheetState extends State<_ProfileSetupSheet> {
     setState(() => _isLoading = true);
     
     try {
-      // Profili username ve username_changed_at ile güncelle
+      // Profili username ve full_name ile güncelle
       final userId = Supabase.instance.client.auth.currentUser?.id;
+      debugPrint('ProfileSetup: Saving profile for user $userId');
+      debugPrint('ProfileSetup: name=$name, username=$username');
+      
       if (userId != null) {
-        await Supabase.instance.client.from('profiles').upsert({
-          'id': userId,
+        await Supabase.instance.client.from('profiles').update({
           'full_name': name,
           'username': username,
-          'username_changed_at': DateTime.now().toIso8601String(),
           'updated_at': DateTime.now().toIso8601String(),
-        });
+        }).eq('id', userId);
+        
+        debugPrint('ProfileSetup: Profile saved successfully');
       }
+      
+      if (!mounted) return;
       widget.onComplete(name);
     } catch (e) {
+      debugPrint('ProfileSetup: Error saving profile: $e');
       if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Profil oluşturulamadı: ${e.toString()}')),
+        SnackBar(content: Text('Profil kaydedilemedi: ${e.toString()}')),
       );
     }
   }

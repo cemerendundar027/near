@@ -7,6 +7,7 @@ import '../../shared/widgets/qr_code.dart';
 import '../../shared/widgets/near_branding.dart';
 import '../../shared/accessibility.dart';
 import '../../shared/supabase_service.dart';
+import '../../shared/mood_aura.dart';
 import '../profile/profile_edit_page.dart';
 import '../chats/chat_extras_pages.dart';
 import 'account_page.dart';
@@ -136,23 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             ),
                           ),
                         )
-                      : CircleAvatar(
-                          radius: 30,
-                          backgroundColor: isDark ? Colors.white12 : Colors.grey.shade200,
-                          backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
-                              ? NetworkImage(avatarUrl)
-                              : null,
-                          onBackgroundImageError: avatarUrl != null ? (_, __) {
-                            debugPrint('Avatar load error: $avatarUrl');
-                          } : null,
-                          child: avatarUrl == null || avatarUrl.isEmpty
-                              ? Icon(
-                                  Icons.person,
-                                  color: isDark ? Colors.white54 : Colors.grey.shade600,
-                                  size: 36,
-                                )
-                              : null,
-                        ),
+                      : _buildProfileAvatarWithAura(isDark, avatarUrl),
                   title: Text(
                     displayName,
                     style: TextStyle(
@@ -221,6 +206,11 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
           ),
+
+          const SizedBox(height: 24),
+
+          // ✨ Mood Aura - Premium Feature
+          _buildMoodAuraSection(isDark, cs),
 
           const SizedBox(height: 24),
 
@@ -373,6 +363,188 @@ class _SettingsPageState extends State<SettingsPage> {
     indent: 70,
     color: isDark ? Colors.white12 : Colors.black.withAlpha(15),
   );
+
+  /// Profil avatarını Mood Aura ile göster
+  Widget _buildProfileAvatarWithAura(bool isDark, String? avatarUrl) {
+    final currentMood = MoodAura.fromString(_profile?['mood_aura']);
+    
+    final avatarWidget = CircleAvatar(
+      radius: 30,
+      backgroundColor: isDark ? Colors.white12 : Colors.grey.shade200,
+      backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+          ? NetworkImage(avatarUrl)
+          : null,
+      onBackgroundImageError: avatarUrl != null ? (_, __) {
+        debugPrint('Avatar load error: $avatarUrl');
+      } : null,
+      child: avatarUrl == null || avatarUrl.isEmpty
+          ? Icon(
+              Icons.person,
+              color: isDark ? Colors.white54 : Colors.grey.shade600,
+              size: 36,
+            )
+          : null,
+    );
+    
+    // Mood Aura aktifse sarmalayıcı ile göster
+    if (currentMood != MoodAura.none) {
+      return MoodAuraWidget(
+        mood: currentMood,
+        size: 60,
+        child: avatarWidget,
+      );
+    }
+    
+    return avatarWidget;
+  }
+
+  /// Mood Aura Premium Section
+  Widget _buildMoodAuraSection(bool isDark, ColorScheme cs) {
+    final currentMood = MoodAura.fromString(_profile?['mood_aura']);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            isDark 
+                ? (currentMood.primaryColor?.withAlpha(30) ?? const Color(0xFF1C1C1E))
+                : (currentMood.primaryColor?.withAlpha(20) ?? Colors.white),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: currentMood.primaryColor?.withAlpha(50) ?? Colors.transparent,
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: currentMood != MoodAura.none
+                ? MoodAuraWidget(
+                    mood: currentMood,
+                    size: 44,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: [
+                            currentMood.primaryColor!,
+                            currentMood.secondaryColor!,
+                          ],
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          currentMood.emoji,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isDark ? Colors.white12 : Colors.grey.shade200,
+                    ),
+                    child: Icon(
+                      Icons.auto_awesome_rounded,
+                      color: isDark ? Colors.white54 : Colors.grey.shade600,
+                      size: 24,
+                    ),
+                  ),
+            title: Row(
+              children: [
+                Text(
+                  '✨ Mood Aura',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: cs.onSurface,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF8B5CF6), Color(0xFFEC4899)],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'PREMIUM',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Text(
+              currentMood != MoodAura.none
+                  ? '${currentMood.emoji} ${currentMood.label} - ${currentMood.description}'
+                  : 'Ruh halini profil fotoğrafınla göster',
+              style: TextStyle(
+                color: isDark ? Colors.white60 : Colors.black54,
+                fontSize: 13,
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              color: isDark ? Colors.white38 : Colors.black38,
+            ),
+            onTap: () => _showMoodAuraPicker(isDark),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMoodAuraPicker(bool isDark) {
+    final currentMood = MoodAura.fromString(_profile?['mood_aura']);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => MoodAuraPickerSheet(
+        currentMood: currentMood,
+        onMoodSelected: (mood) async {
+          final success = await MoodAuraService.instance.setMood(mood);
+          if (success) {
+            setState(() {
+              _profile?['mood_aura'] = mood.value;
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    mood == MoodAura.none
+                        ? 'Mood Aura kapatıldı'
+                        : '${mood.emoji} ${mood.label} aurası aktif!',
+                  ),
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: mood.primaryColor ?? Colors.grey,
+                ),
+              );
+            }
+          }
+        },
+      ),
+    );
+  }
 
   void _shareApp() {
     SharePlus.instance.share(

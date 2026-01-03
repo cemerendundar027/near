@@ -37,67 +37,9 @@ class _CallsPageState extends State<CallsPage> {
   bool _isEditing = false;
   final Set<String> _selectedCalls = {};
 
-  // Mock arama geçmişi
-  final List<CallRecord> _calls = [
-    CallRecord(
-      id: '1',
-      name: 'Mert',
-      isVideo: true,
-      isOutgoing: false,
-      isMissed: true,
-      time: DateTime.now().subtract(const Duration(minutes: 20)),
-      callCount: 2,
-    ),
-    CallRecord(
-      id: '2',
-      name: 'Ayşe',
-      isVideo: false,
-      isOutgoing: true,
-      isMissed: false,
-      time: DateTime.now().subtract(const Duration(hours: 2)),
-    ),
-    CallRecord(
-      id: '3',
-      name: 'Selin',
-      isVideo: false,
-      isOutgoing: false,
-      isMissed: false,
-      time: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-    CallRecord(
-      id: '4',
-      name: 'Ahmet',
-      isVideo: true,
-      isOutgoing: true,
-      isMissed: false,
-      time: DateTime.now().subtract(const Duration(days: 1, hours: 3)),
-    ),
-    CallRecord(
-      id: '5',
-      name: 'Zeynep',
-      isVideo: false,
-      isOutgoing: false,
-      isMissed: true,
-      time: DateTime.now().subtract(const Duration(days: 2)),
-      callCount: 3,
-    ),
-    CallRecord(
-      id: '6',
-      name: 'Can',
-      isVideo: true,
-      isOutgoing: false,
-      isMissed: false,
-      time: DateTime.now().subtract(const Duration(days: 3)),
-    ),
-    CallRecord(
-      id: '7',
-      name: 'Deniz',
-      isVideo: false,
-      isOutgoing: true,
-      isMissed: false,
-      time: DateTime.now().subtract(const Duration(days: 5)),
-    ),
-  ];
+  // Gerçek arama geçmişi - Supabase'den yüklenecek
+  final List<CallRecord> _calls = [];
+  // Not: Arama özelliği yakında eklenecek
 
   String _formatTime(DateTime time) {
     final now = DateTime.now();
@@ -120,7 +62,12 @@ class _CallsPageState extends State<CallsPage> {
   }
 
   void _startCall(CallRecord call) {
-    context.push('/call/${call.id}?video=${call.isVideo}');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Arama özelliği yakında eklenecek'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _showNewCallSheet() {

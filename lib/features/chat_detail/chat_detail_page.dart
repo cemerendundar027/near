@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -12,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import '../../app/theme.dart';
 import '../../shared/chat_store.dart';
 import '../../shared/chat_service.dart';
+import '../../shared/supabase_service.dart';
 import '../../shared/audio_service.dart';
 import '../../shared/message_store.dart';
 import '../../shared/models.dart';
@@ -25,7 +27,11 @@ import '../chats/forward_message_page.dart';
 import '../chats/media_gallery_page.dart';
 import '../chats/message_search_page.dart';
 import '../chats/chat_extras_pages.dart';
+import '../chats/group_info_page.dart';
 import 'message_info_sheet.dart';
+import '../../shared/message_effects.dart';
+import '../../shared/mood_aura.dart';
+import '../../shared/settings_service.dart';
 
 class ChatDetailPage extends StatefulWidget {
   static const route = '/chat';
@@ -56,10 +62,19 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   
   // Supabase realtime channel
   RealtimeChannel? _messagesChannel;
+  RealtimeChannel? _messageStatusChannel;
+  StreamSubscription? _presenceSubscription; // Stream subscription for presence
   List<Map<String, dynamic>> _supabaseMessages = [];
   bool _useSupabase = false;
   
-  // Supabase'den chat adı ve online durumu
+  // Gizlilik kontrol durumları
+  bool _canSeeLastSeen = true;
+  bool _canSeeReadReceipts = true;
+  
+  // Gerçek zamanlı online durumu
+  // Gerçek zamanlı online durumu - Artık ChatStore'dan takip ediliyor
+  
+  // Supabase'den chat adı
   String get _chatName {
     if (_supabaseChat != null) {
       return chatService.getChatName(_supabaseChat!);
@@ -68,17 +83,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
   
   bool get _isOtherUserOnline {
-    if (_supabaseChat != null) {
-      return chatService.isOtherUserOnline(_supabaseChat!);
-    }
+    // Gizlilik kontrolü
+    if (!_canSeeLastSeen) return false;
     return store.presenceOf(_chat.userId).online;
-  }
-  
-  String get _lastSeenText {
-    if (_supabaseChat != null) {
-      return chatService.getOtherUserLastSeen(_supabaseChat!);
-    }
-    return _formatLastSeen(store.presenceOf(_chat.userId).lastSeenAt);
   }
   
   // Mesaj durumu cache'i (messageId -> status)
@@ -161,11 +168,23 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   int _mentionStartIndex = -1;
   bool get _isGroupChat => _supabaseChat?['is_group'] == true;
 
+  /// Mesaj Efektleri (Premium)
+  MessageEffect _selectedEffect = MessageEffect.none;
+  bool _showEffectOverlay = false;
+  MessageEffect _playingEffect = MessageEffect.none;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onTextChanged);
     _initSupabaseChat();
+    _loadSavedMessageEffect();
+  }
+
+  /// Kayıtlı mesaj efektini yükle
+  void _loadSavedMessageEffect() {
+    final savedEffect = SettingsService.instance.defaultMessageEffect;
+    _selectedEffect = MessageEffect.fromString(savedEffect);
   }
 
   /// Kayıtlı duvar kağıdını yükle
@@ -212,11 +231,14 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
+  bool _supabaseInitialized = false;
+
   /// Supabase mesajlarını yükle ve dinle
   Future<void> _loadSupabaseMessages() async {
-    if (chatService.currentUserId == null) return;
+    if (chatService.currentUserId == null || _supabaseInitialized) return;
     
     try {
+      _supabaseInitialized = true;
       // Supabase chat bilgisini al (isim, online durumu vs.)
       _supabaseChat = chatService.chats.firstWhere(
         (c) => c['id'] == _chat.id,
@@ -229,21 +251,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       _supabaseMessages = chatService.getMessages(_chat.id);
       _useSupabase = true;
       
+      // Grup sohbetiyse üyeleri yükle
+      if (_supabaseChat?['is_group'] == true) {
+        _loadChatMembersIfNeeded();
+      }
+      
       // Yıldızlı mesajları yükle
       _loadStarredMessageIds();
       
-      // Gelen mesajları "delivered" olarak işaretle
-      _markIncomingMessagesAsDelivered();
-      
-      // Realtime subscription
+      // Realtime subscription - yeni mesajları dinle
       _messagesChannel = chatService.subscribeToMessages(_chat.id, (newMessage) {
         debugPrint('ChatDetailPage: New message received');
-        // Gelen mesajı delivered olarak işaretle
         final messageId = newMessage['id'] as String?;
         final senderId = newMessage['sender_id'] as String?;
+        
+        // Gelen mesajı hemen read olarak işaretle (chat açık olduğu için)
         if (messageId != null && senderId != chatService.currentUserId) {
-          chatService.markMessageAsDelivered(messageId);
+          chatService.markMessageAsRead(messageId);
         }
+        
         setState(() {
           _supabaseMessages = chatService.getMessages(_chat.id);
         });
@@ -264,6 +290,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       // Chat'i okundu olarak işaretle (tüm mesajları read yap)
       _markAllMessagesAsRead();
       
+      // Gizlilik ayarlarını kontrol et (birebir sohbet için)
+      if (!_isGroupChat) {
+        _checkPrivacySettings();
+        // Online durumu takibini başlat
+        _initPresence();
+      }
+      
       // Kendi mesajlarımın durumlarını yükle
       _loadMyMessageStatuses();
       
@@ -280,26 +313,40 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
-  /// Gelen mesajları "delivered" olarak işaretle
-  void _markIncomingMessagesAsDelivered() {
-    for (final msg in _supabaseMessages) {
-      final senderId = msg['sender_id'] as String?;
-      final messageId = msg['id'] as String?;
-      if (senderId != chatService.currentUserId && messageId != null) {
-        chatService.markMessageAsDelivered(messageId);
-      }
-    }
+  /// Tüm mesajları okundu olarak işaretle (chat açıldığında)
+  void _markAllMessagesAsRead() {
+    // Chat açıldığında tüm mesajları read olarak işaretle
+    chatService.markChatAsRead(_chat.id);
+    // Unread count'u da sıfırla
+    chatService.clearUnreadCount(_chat.id);
   }
 
-  /// Tüm mesajları okundu olarak işaretle
-  void _markAllMessagesAsRead() {
-    chatService.markChatAsRead(_chat.id);
-    for (final msg in _supabaseMessages) {
-      final senderId = msg['sender_id'] as String?;
-      final messageId = msg['id'] as String?;
-      if (senderId != chatService.currentUserId && messageId != null) {
-        chatService.markMessageAsRead(messageId);
+  /// Gizlilik ayarlarını kontrol et (last seen ve read receipts)
+  Future<void> _checkPrivacySettings() async {
+    if (_isGroupChat || _supabaseChat == null) return;
+    
+    final otherUser = chatService.getOtherUser(_supabaseChat!);
+    if (otherUser == null) return;
+    
+    final otherUserId = otherUser['id'] as String?;
+    if (otherUserId == null) return;
+    
+    try {
+      // Last seen gizlilik kontrolü
+      final canSeeLastSeen = await chatService.canSeeLastSeen(otherUserId);
+      // Read receipts gizlilik kontrolü
+      final canSeeReadReceipts = await chatService.canSeeReadReceipts(otherUserId);
+      
+      if (mounted) {
+        setState(() {
+          _canSeeLastSeen = canSeeLastSeen;
+          _canSeeReadReceipts = canSeeReadReceipts;
+        });
       }
+      
+      debugPrint('Privacy: canSeeLastSeen=$canSeeLastSeen, canSeeReadReceipts=$canSeeReadReceipts');
+    } catch (e) {
+      debugPrint('Error checking privacy settings: $e');
     }
   }
 
@@ -308,26 +355,100 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final currentUserId = chatService.currentUserId;
     if (currentUserId == null) return;
 
+    // Grup için üye sayısını al (gönderen hariç)
+    final memberCount = _isGroupChat ? (_chatMembers.length - 1) : 1;
+
     for (final msg in _supabaseMessages) {
       final senderId = msg['sender_id'] as String?;
       final messageId = msg['id'] as String?;
       
       // Sadece kendi mesajlarım için durum kontrolü
       if (senderId == currentUserId && messageId != null) {
+        // Gizlilik kontrolü - okundu bilgisi kapalıysa sadece sent göster
+        if (!_isGroupChat && !_canSeeReadReceipts) {
+          _messageStatusCache[messageId] = MessageStatus.sent;
+          continue;
+        }
+        
         final statusData = await chatService.getMessageReadStatus(messageId);
         
-        MessageStatus status = MessageStatus.sent;
-        if (statusData['read'] == true) {
-          status = MessageStatus.read;
-        } else if (statusData['delivered'] == true) {
-          status = MessageStatus.delivered;
+        // Grup vs bireysel sohbet için farklı mantık
+        MessageStatus status = MessageStatus.sent; // tek tik
+        
+        if (_isGroupChat) {
+          // Grup: Tüm üyeler okudu mu kontrol et
+          final readCount = statusData['read_count'] as int? ?? 0;
+          if (readCount >= memberCount && memberCount > 0) {
+            status = MessageStatus.read; // herkes okudu
+          } else if (readCount > 0) {
+            status = MessageStatus.delivered; // bazıları okudu
+          }
+        } else {
+          // Bireysel: Herhangi bir okuma varsa okundu
+          if (statusData['read'] == true) {
+            status = MessageStatus.read;
+          }
         }
         
         _messageStatusCache[messageId] = status;
       }
     }
     
-    if (mounted) setState(() {});
+    // Mesaj durumu değişikliklerini dinle (realtime)
+    _subscribeToMessageStatusChanges();
+    
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+  
+  /// Mesaj durumu değişikliklerini realtime dinle
+  void _subscribeToMessageStatusChanges() {
+    final currentUserId = chatService.currentUserId;
+    if (currentUserId == null) return;
+    
+    // Bu chat'teki kendi mesajlarımın ID'lerini al
+    final myMessageIds = _supabaseMessages
+        .where((m) => m['sender_id'] == currentUserId)
+        .map((m) => m['id'] as String)
+        .toList();
+    
+    if (myMessageIds.isEmpty) return;
+    
+    _messageStatusChannel = Supabase.instance.client
+        .channel('message_status_${_chat.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'message_status',
+          callback: (payload) {
+            debugPrint('ChatDetailPage: Message status changed: ${payload.newRecord}');
+            final messageId = payload.newRecord['message_id'] as String?;
+            final readAt = payload.newRecord['read_at'];
+            final deliveredAt = payload.newRecord['delivered_at'];
+            
+            if (messageId != null && myMessageIds.contains(messageId)) {
+              MessageStatus newStatus = MessageStatus.sent;
+              if (readAt != null) {
+                newStatus = MessageStatus.read;
+              } else if (deliveredAt != null) {
+                newStatus = MessageStatus.delivered;
+              }
+              
+              if (mounted) {
+                setState(() {
+                  _messageStatusCache[messageId] = newStatus;
+                });
+                debugPrint('ChatDetailPage: Updated status for $messageId to $newStatus');
+              }
+            }
+          },
+        )
+        .subscribe();
+    
+    debugPrint('ChatDetailPage: Subscribed to message status changes for ${myMessageIds.length} messages');
   }
 
   /// URL detection and preview loading
@@ -404,11 +525,49 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (_chatMembers.isNotEmpty) return;
     
     final members = await chatService.getGroupMembers(_chat.id);
+    debugPrint('ChatDetailPage: Loaded ${members.length} group members');
     if (mounted) {
       setState(() {
         _chatMembers = members;
       });
     }
+  }
+
+  /// Mesaj sender ID'sine göre isim bul
+  String? _getSenderNameForMessage(String senderId) {
+    // Önce _chatMembers'dan bak
+    for (final member in _chatMembers) {
+      final userId = member['user_id'] as String?;
+      if (userId == senderId) {
+        final profile = member['profiles'] as Map<String, dynamic>?;
+        return profile?['full_name'] ?? profile?['username'] ?? 'Kullanıcı';
+      }
+    }
+    
+    // Supabase mesajlarından sender bilgisi al
+    for (final msg in _supabaseMessages) {
+      if (msg['sender_id'] == senderId) {
+        final sender = msg['sender'] as Map<String, dynamic>?;
+        if (sender != null) {
+          return sender['full_name'] ?? sender['username'] ?? 'Kullanıcı';
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /// Mesaj ID'sine göre reactions bul
+  List<Map<String, dynamic>>? _getReactionsForMessage(String messageId) {
+    for (final msg in _supabaseMessages) {
+      if (msg['id'] == messageId) {
+        final reactions = msg['message_reactions'];
+        if (reactions != null && reactions is List && reactions.isNotEmpty) {
+          return List<Map<String, dynamic>>.from(reactions);
+        }
+      }
+    }
+    return null;
   }
 
   /// Mention önerilerini filtrele
@@ -540,11 +699,27 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   void dispose() {
     store.setActiveChat(null);
     _messagesChannel?.unsubscribe();
+    _messageStatusChannel?.unsubscribe();
     _typingChannel?.unsubscribe();
+    _presenceSubscription?.cancel();
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+  
+  void _initPresence() {
+    if (_supabaseChat == null || _isGroupChat) return;
+    
+    final otherUser = chatService.getOtherUser(_supabaseChat!);
+    if (otherUser == null) return;
+    
+    final otherUserId = otherUser['id'] as String?;
+    if (otherUserId == null) return;
+
+    // Start subscription
+    _presenceSubscription?.cancel();
+    _presenceSubscription = chatService.subscribeToPresence(otherUserId);
   }
 
   void _scrollToBottom({bool jump = false}) {
@@ -594,14 +769,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
   }
 
-  String _formatLastSeen(DateTime dt) {
-    final now = DateTime.now();
-    final sameDay =
-        now.year == dt.year && now.month == dt.month && now.day == dt.day;
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return sameDay ? 'son görülme bugün $hh:$mm' : 'son görülme $hh:$mm';
-  }
+
 
   void _simulateIncomingMessage({required String text}) {
     store.simulateIncoming(chatId: _chat.id, replyText: text);
@@ -697,6 +865,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _controller.clear();
     FocusScope.of(context).unfocus();
     
+    // Efekti kaydet ve sıfırla
+    final effect = _selectedEffect;
+    
     // Mention'ları parse et (grup sohbetlerinde)
     List<Map<String, dynamic>>? mentions;
     if (_isGroupChat && _chatMembers.isNotEmpty) {
@@ -709,21 +880,51 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       _lastDetectedUrl = null;
       _showMentionSuggestions = false;
       _mentionStartIndex = -1;
+      // NOT: _selectedEffect sıfırlanmıyor - kullanıcı değiştirene kadar kalıcı
     });
 
-    final success = await chatService.sendMessageWithMentions(
+    final success = await chatService.sendMessageWithMentionsAndEffect(
       chatId: _chat.id,
       content: content,
       mentions: mentions,
       replyToId: _replyTo?.id,
+      effect: effect != MessageEffect.none ? effect.value : null,
     );
 
     if (success) {
-      debugPrint('ChatDetailPage: Message sent to Supabase${mentions?.isNotEmpty == true ? ' with ${mentions!.length} mentions' : ''}');
-      // Realtime subscription otomatik güncelleyecek
+      debugPrint('ChatDetailPage: Message sent to Supabase${effect != MessageEffect.none ? ' with ${effect.label} effect' : ''}');
+      
+      // Efekt varsa overlay göster
+      if (effect != MessageEffect.none) {
+        _playMessageEffect(effect);
+      }
     } else {
       _toast('Mesaj gönderilemedi');
     }
+  }
+
+  /// Mesaj efekti oynat
+  void _playMessageEffect(MessageEffect effect) {
+    setState(() {
+      _showEffectOverlay = true;
+      _playingEffect = effect;
+    });
+  }
+
+  /// Efekt seçici göster
+  void _showEffectPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => MessageEffectPickerSheet(
+        currentEffect: _selectedEffect,
+        onEffectSelected: (effect) {
+          setState(() => _selectedEffect = effect);
+          // Seçilen efekti kalıcı olarak kaydet
+          SettingsService.instance.setDefaultMessageEffect(effect.value);
+        },
+      ),
+    );
   }
 
   void _startCall({required bool video}) {
@@ -1671,6 +1872,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   void _showChatInfo() {
+    // Grup için GroupInfoPage'e git
+    if (_isGroupChat) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GroupInfoPage(groupId: _chat.id),
+        ),
+      ).then((_) {
+        // GroupInfoPage'den döndükten sonra wallpaper'ı yeniden yükle
+        _wallpaperLoaded = false;
+        _loadSavedWallpaper();
+      });
+      return;
+    }
+    
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cs = Theme.of(context).colorScheme;
     final presence = store.presenceOf(_chat.userId);
@@ -1720,7 +1936,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             Text(
               presence.online
                   ? 'Çevrimiçi'
-                  : _formatLastSeen(presence.lastSeenAt),
+                  : chatService.formatLastSeen(presence.lastSeenAt),
               style: TextStyle(
                 color: presence.online
                     ? NearTheme.primary
@@ -1839,16 +2055,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         final presence = store.presenceOf(_chat.userId);
         final typing = store.isTyping(_chat.id) || _isOtherUserTyping;
         
-        // Supabase veya mock data'dan online durumu
-        final isOnline = _useSupabase ? _isOtherUserOnline : presence.online;
+        // Grup için online durumu gösterme
+        final isOnline = _isGroupChat ? false : presence.online;
 
-        final subtitle = typing
-            ? 'yazıyor...'
-            : (_useSupabase 
-                  ? (isOnline ? 'çevrimiçi' : _lastSeenText)
-                  : (presence.online
-                      ? 'çevrimiçi'
-                      : _formatLastSeen(presence.lastSeenAt)));
+        // Grup için üye sayısı, bireysel sohbet için online durumu
+        String subtitle;
+        if (_isGroupChat) {
+          final memberCount = _chatMembers.length;
+          subtitle = typing 
+              ? 'birisi yazıyor...'
+              : (memberCount > 0 ? '$memberCount üye' : 'Yükleniyor...');
+        } else {
+          subtitle = typing
+              ? 'yazıyor...'
+              : (presence.online
+                  ? 'Çevrimiçi'
+                  : chatService.formatLastSeen(presence.lastSeenAt));
+          
+          if (subtitle.isEmpty) subtitle = ''; // Boş ise boş
+        }
 
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -1874,16 +2099,24 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundColor: isDark
-                            ? Colors.white12
-                            : Colors.grey.shade300,
-                        child: Icon(
-                          Icons.person,
-                          size: 22,
-                          color: isDark ? Colors.white54 : Colors.grey.shade600,
-                        ),
+                        backgroundColor: _isGroupChat 
+                            ? NearTheme.primary.withAlpha(30)
+                            : (isDark ? Colors.white12 : Colors.grey.shade300),
+                        backgroundImage: _supabaseChat?['avatar_url'] != null 
+                            ? NetworkImage(_supabaseChat!['avatar_url']) 
+                            : null,
+                        child: _supabaseChat?['avatar_url'] == null
+                            ? Icon(
+                                _isGroupChat ? Icons.group : Icons.person,
+                                size: 22,
+                                color: _isGroupChat 
+                                    ? NearTheme.primary 
+                                    : (isDark ? Colors.white54 : Colors.grey.shade600),
+                              )
+                            : null,
                       ),
-                      if (isOnline)
+                      // Sadece bireysel sohbetlerde online durumu göster
+                      if (isOnline && !_isGroupChat)
                         Positioned(
                           right: 0,
                           bottom: 0,
@@ -1967,7 +2200,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             ],
           ),
 
-          body: ChatWallpaper(
+          body: Stack(
+            children: [
+              ChatWallpaper(
             wallpaperId: _wallpaperId,
             child: Column(
               children: [
@@ -1980,6 +2215,16 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                     itemBuilder: (context, i) {
                       if (i == 0) return _DayChip(text: 'Bugün');
                       final m = _messages[i - 1];
+                      
+                      // Grup sohbetinde sender name bul
+                      String? senderName;
+                      if (_isGroupChat && !m.isMe) {
+                        senderName = _getSenderNameForMessage(m.senderId);
+                      }
+                      
+                      // Reactions bul
+                      final reactions = _getReactionsForMessage(m.id);
+                      
                       return Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: _SwipeableMessageBubble(
@@ -1988,6 +2233,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                           onLongPress: () => _onMessageLongPress(m),
                           onReply: () => setState(() => _replyTo = m),
                           onReact: (emoji) => _addReaction(m, emoji),
+                          isGroupChat: _isGroupChat,
+                          senderName: senderName,
+                          reactions: reactions,
                         ),
                       );
                     },
@@ -2210,7 +2458,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 4),
+                          // ✨ Effect Button (Premium)
+                          EffectButton(
+                            currentEffect: _selectedEffect,
+                            onTap: _showEffectPicker,
+                          ),
+                          const SizedBox(width: 4),
                           // Send/Voice button
                           GestureDetector(
                             onTap: _controller.text.isEmpty
@@ -2219,17 +2473,31 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                             onLongPress: _controller.text.isEmpty
                                 ? _startVoiceRecording
                                 : null,
-                            child: Container(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                color: NearTheme.primary,
+                                color: _selectedEffect != MessageEffect.none
+                                    ? _selectedEffect.colors.first
+                                    : NearTheme.primary,
                                 shape: BoxShape.circle,
+                                boxShadow: _selectedEffect != MessageEffect.none
+                                    ? [
+                                        BoxShadow(
+                                          color: _selectedEffect.colors.first.withAlpha(100),
+                                          blurRadius: 8,
+                                          spreadRadius: 2,
+                                        ),
+                                      ]
+                                    : null,
                               ),
                               child: Icon(
                                 _controller.text.isEmpty
                                     ? Icons.mic_rounded
-                                    : Icons.send_rounded,
+                                    : (_selectedEffect != MessageEffect.none
+                                        ? _selectedEffect.icon
+                                        : Icons.send_rounded),
                                 color: Colors.white,
                                 size: 22,
                               ),
@@ -2257,6 +2525,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               ],
             ),
           ), // Close ChatWallpaper
+
+              // ✨ Message Effect Overlay (Premium)
+              if (_showEffectOverlay)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: MessageEffectOverlay(
+                      effect: _playingEffect,
+                      onComplete: () {
+                        if (mounted) {
+                          setState(() {
+                            _showEffectOverlay = false;
+                            _playingEffect = MessageEffect.none;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ),
+            ], // Close Stack
+          ), // Close body Stack
         );
       },
     );
@@ -2541,6 +2829,9 @@ class _SwipeableMessageBubble extends StatefulWidget {
   final VoidCallback onLongPress;
   final VoidCallback onReply;
   final void Function(String emoji) onReact;
+  final bool isGroupChat;
+  final String? senderName;
+  final List<Map<String, dynamic>>? reactions;
 
   const _SwipeableMessageBubble({
     required this.message,
@@ -2548,6 +2839,9 @@ class _SwipeableMessageBubble extends StatefulWidget {
     required this.onLongPress,
     required this.onReply,
     required this.onReact,
+    this.isGroupChat = false,
+    this.senderName,
+    this.reactions,
   });
 
   @override
@@ -2690,6 +2984,9 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
                   message: widget.message,
                   starred: widget.starred,
                   onLongPress: widget.onLongPress,
+                  isGroupChat: widget.isGroupChat,
+                  senderName: widget.senderName,
+                  reactions: widget.reactions,
                 ),
                 
                 // Heart animation overlay
@@ -2728,11 +3025,17 @@ class _MessageBubble extends StatelessWidget {
   final Message message;
   final bool starred;
   final VoidCallback onLongPress;
+  final bool isGroupChat;
+  final String? senderName;
+  final List<Map<String, dynamic>>? reactions;
 
   const _MessageBubble({
     required this.message,
     required this.starred,
     required this.onLongPress,
+    this.isGroupChat = false,
+    this.senderName,
+    this.reactions,
   });
 
   String _formatTime(DateTime dt) {
@@ -2756,6 +3059,22 @@ class _MessageBubble extends StatelessWidget {
 
   Color _statusColor(MessageStatus s) {
     return s == MessageStatus.read ? const Color(0xFF53BDEB) : Colors.white60;
+  }
+
+  // Sender name için renk (WhatsApp tarzı)
+  Color _getSenderColor(String name) {
+    final colors = [
+      const Color(0xFF7B3FF2), // Purple
+      const Color(0xFF00BCD4), // Cyan
+      const Color(0xFFFF5722), // Deep Orange
+      const Color(0xFF4CAF50), // Green
+      const Color(0xFFE91E63), // Pink
+      const Color(0xFF3F51B5), // Indigo
+      const Color(0xFFFF9800), // Orange
+      const Color(0xFF009688), // Teal
+    ];
+    final hash = name.codeUnits.fold<int>(0, (a, b) => a + b);
+    return colors[hash % colors.length];
   }
 
   void _openUrl(String url) async {
@@ -2784,6 +3103,9 @@ class _MessageBubble extends StatelessWidget {
         ? const EdgeInsets.all(4.0)
         : const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
 
+    // Grup sohbetinde gönderen ismini göster
+    final showSenderName = isGroupChat && !isMe && senderName != null && senderName!.isNotEmpty;
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
@@ -2811,8 +3133,22 @@ class _MessageBubble extends StatelessWidget {
             ],
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
+              // Grup sohbetinde gönderen ismi
+              if (showSenderName)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    senderName!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _getSenderColor(senderName!),
+                    ),
+                  ),
+                ),
+              
               // Starred indicator
               if (starred)
                 Padding(
@@ -2866,9 +3202,56 @@ class _MessageBubble extends StatelessWidget {
                   ],
                 ),
               ),
+              
+              // Reactions badge
+              if (reactions != null && reactions!.isNotEmpty)
+                _buildReactionsBadge(isDark),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Reactions badge widget'ı
+  Widget _buildReactionsBadge(bool isDark) {
+    // Emoji'leri grupla
+    final emojiCounts = <String, int>{};
+    for (final r in reactions!) {
+      final emoji = r['emoji'] as String? ?? '❤️';
+      emojiCounts[emoji] = (emojiCounts[emoji] ?? 0) + 1;
+    }
+    
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF3A3A3C) : Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: emojiCounts.entries.map((entry) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(entry.key, style: const TextStyle(fontSize: 14)),
+                if (entry.value > 1) ...[
+                  const SizedBox(width: 2),
+                  Text(
+                    '${entry.value}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }

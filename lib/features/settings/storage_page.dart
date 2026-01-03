@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../app/theme.dart';
 import '../../shared/settings_widgets.dart';
+import '../../shared/chat_service.dart';
 
 class StoragePage extends StatefulWidget {
   static const route = '/settings/storage';
@@ -15,6 +18,130 @@ class _StoragePageState extends State<StoragePage> {
   bool _autoDownloadVideos = false;
   bool _autoDownloadDocuments = true;
   bool _useLessData = false;
+  
+  // Storage bilgileri
+  int _totalStorageBytes = 0;
+  int _usedStorageBytes = 0;
+  int _cacheBytes = 0;
+  int _photosBytes = 0;
+  int _videosBytes = 0;
+  int _documentsBytes = 0;
+  int _otherBytes = 0;
+  bool _loadingStorage = true;
+  
+  // Gerçek sohbet verileri
+  List<Map<String, dynamic>> _chatStorageData = [];
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadStorageInfo();
+  }
+  
+  Future<void> _loadStorageInfo() async {
+    try {
+      // Uygulama dizinlerini al
+      final appDir = await getApplicationDocumentsDirectory();
+      final cacheDir = await getTemporaryDirectory();
+      
+      // Cache boyutunu hesapla
+      _cacheBytes = await _calculateDirectorySize(cacheDir);
+      
+      // App storage boyutunu hesapla
+      _usedStorageBytes = await _calculateDirectorySize(appDir) + _cacheBytes;
+      
+      // Medya dosyalarını kategorize et
+      await _categorizeMediaFiles(appDir);
+      
+      // Gerçek sohbet verilerini yükle
+      await _loadChatStorageData();
+      
+      // Toplam disk alanı (tahmini)
+      _totalStorageBytes = 64 * 1024 * 1024 * 1024; // 64 GB varsayılan
+      
+      if (mounted) {
+        setState(() => _loadingStorage = false);
+      }
+    } catch (e) {
+      debugPrint('Storage info error: $e');
+      if (mounted) {
+        setState(() => _loadingStorage = false);
+      }
+    }
+  }
+  
+  Future<int> _calculateDirectorySize(Directory dir) async {
+    int size = 0;
+    try {
+      if (await dir.exists()) {
+        await for (final entity in dir.list(recursive: true, followLinks: false)) {
+          if (entity is File) {
+            size += await entity.length();
+          }
+        }
+      }
+    } catch (e) {
+      // Erişim hatası olabilir
+    }
+    return size;
+  }
+  
+  Future<void> _categorizeMediaFiles(Directory dir) async {
+    try {
+      await for (final entity in dir.list(recursive: true, followLinks: false)) {
+        if (entity is File) {
+          final path = entity.path.toLowerCase();
+          final size = await entity.length();
+          
+          if (path.endsWith('.jpg') || path.endsWith('.jpeg') || 
+              path.endsWith('.png') || path.endsWith('.gif') || 
+              path.endsWith('.webp')) {
+            _photosBytes += size;
+          } else if (path.endsWith('.mp4') || path.endsWith('.mov') || 
+                     path.endsWith('.avi') || path.endsWith('.mkv')) {
+            _videosBytes += size;
+          } else if (path.endsWith('.pdf') || path.endsWith('.doc') || 
+                     path.endsWith('.docx') || path.endsWith('.xls') ||
+                     path.endsWith('.xlsx') || path.endsWith('.txt')) {
+            _documentsBytes += size;
+          } else {
+            _otherBytes += size;
+          }
+        }
+      }
+    } catch (e) {
+      // Hata yoksay
+    }
+  }
+  
+  Future<void> _loadChatStorageData() async {
+    try {
+      final chatService = ChatService.instance;
+      final chats = chatService.chats;
+      
+      _chatStorageData = chats.map((chat) {
+        // Her sohbet için tahmini boyut (gerçek implementasyonda
+        // her sohbetin medya dosyalarını sayabilirsiniz)
+        return {
+          'id': chat['id'] ?? '',
+          'name': chat['name'] ?? 'Sohbet',
+          'isGroup': chat['is_group'] ?? false,
+          'size': 0, // Gerçek boyut hesaplanabilir
+          'photos': 0,
+          'videos': 0,
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint('Chat storage data error: $e');
+    }
+  }
+  
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
 
   void _toast(String msg) {
     ScaffoldMessenger.of(context)
@@ -29,13 +156,10 @@ class _StoragePageState extends State<StoragePage> {
   void _showManageChatsDialog() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    final chats = [
-      {'name': 'Aile Grubu', 'size': '256 MB', 'photos': 124, 'videos': 45},
-      {'name': 'İş Arkadaşları', 'size': '180 MB', 'photos': 89, 'videos': 23},
-      {'name': 'Cem Yılmaz', 'size': '95 MB', 'photos': 67, 'videos': 12},
-      {'name': 'Ayşe Demir', 'size': '45 MB', 'photos': 34, 'videos': 5},
-      {'name': 'Okul Grubu', 'size': '320 MB', 'photos': 200, 'videos': 80},
-    ];
+    // Gerçek sohbet verilerini kullan
+    final chats = _chatStorageData.isEmpty 
+        ? <Map<String, dynamic>>[] 
+        : _chatStorageData;
     
     showModalBottomSheet(
       context: context,
@@ -88,7 +212,27 @@ class _StoragePageState extends State<StoragePage> {
                 ),
               ),
               Expanded(
-                child: ListView.separated(
+                child: chats.isEmpty 
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.folder_open_rounded,
+                              size: 48,
+                              color: isDark ? Colors.white24 : Colors.black26,
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Henüz sohbet verisi yok',
+                              style: TextStyle(
+                                color: isDark ? Colors.white54 : Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
                   controller: scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: chats.length,
@@ -98,26 +242,32 @@ class _StoragePageState extends State<StoragePage> {
                   ),
                   itemBuilder: (context, index) {
                     final chat = chats[index];
+                    final isGroup = chat['isGroup'] as bool? ?? false;
+                    final chatName = chat['name'] as String? ?? 'Sohbet';
+                    final photos = chat['photos'] as int? ?? 0;
+                    final videos = chat['videos'] as int? ?? 0;
+                    final sizeBytes = chat['size'] as int? ?? 0;
+                    
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
                         backgroundColor: NearTheme.primary.withAlpha(30),
                         child: Icon(
-                          chat['name'].toString().contains('Grubu') || chat['name'].toString().contains('Arkadaş')
-                              ? Icons.group_rounded
-                              : Icons.person_rounded,
+                          isGroup ? Icons.group_rounded : Icons.person_rounded,
                           color: NearTheme.primary,
                         ),
                       ),
                       title: Text(
-                        chat['name'] as String,
+                        chatName,
                         style: TextStyle(
                           fontWeight: FontWeight.w500,
                           color: isDark ? Colors.white : Colors.black87,
                         ),
                       ),
                       subtitle: Text(
-                        '${chat['photos']} fotoğraf, ${chat['videos']} video',
+                        photos > 0 || videos > 0 
+                            ? '$photos fotoğraf, $videos video'
+                            : 'Medya dosyası yok',
                         style: TextStyle(
                           fontSize: 12,
                           color: isDark ? Colors.white54 : Colors.black54,
@@ -127,7 +277,7 @@ class _StoragePageState extends State<StoragePage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            chat['size'] as String,
+                            _formatBytes(sizeBytes),
                             style: TextStyle(
                               fontWeight: FontWeight.w500,
                               color: NearTheme.primary,
@@ -140,7 +290,7 @@ class _StoragePageState extends State<StoragePage> {
                               color: Colors.red.shade400,
                               size: 20,
                             ),
-                            onPressed: () => _showDeleteChatDataDialog(chat['name'] as String),
+                            onPressed: () => _showDeleteChatDataDialog(chatName),
                           ),
                         ],
                       ),
@@ -281,7 +431,9 @@ class _StoragePageState extends State<StoragePage> {
                             ),
                           ),
                           Text(
-                            '1.2 GB of 64 GB',
+                            _loadingStorage 
+                                ? 'Hesaplanıyor...'
+                                : '${_formatBytes(_usedStorageBytes)} of ${_formatBytes(_totalStorageBytes)}',
                             style: TextStyle(
                               color: isDark ? Colors.white60 : Colors.black54,
                               fontSize: 13,
@@ -296,7 +448,9 @@ class _StoragePageState extends State<StoragePage> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
-                    value: 0.018,
+                    value: _totalStorageBytes > 0 
+                        ? _usedStorageBytes / _totalStorageBytes 
+                        : 0,
                     backgroundColor: isDark ? Colors.white12 : Colors.grey.shade200,
                     valueColor: const AlwaysStoppedAnimation(SettingsColors.blue),
                     minHeight: 8,
@@ -306,10 +460,10 @@ class _StoragePageState extends State<StoragePage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _storageItem('Photos', '450 MB', SettingsColors.green),
-                    _storageItem('Videos', '320 MB', SettingsColors.red),
-                    _storageItem('Documents', '180 MB', SettingsColors.orange),
-                    _storageItem('Other', '250 MB', SettingsColors.gray),
+                    _storageItem('Photos', _formatBytes(_photosBytes), SettingsColors.green),
+                    _storageItem('Videos', _formatBytes(_videosBytes), SettingsColors.red),
+                    _storageItem('Documents', _formatBytes(_documentsBytes), SettingsColors.orange),
+                    _storageItem('Other', _formatBytes(_otherBytes), SettingsColors.gray),
                   ],
                 ),
               ],
@@ -409,7 +563,7 @@ class _StoragePageState extends State<StoragePage> {
                   icon: Icons.cleaning_services_rounded,
                   iconBackgroundColor: SettingsColors.red,
                   title: 'Clear Cache',
-                  subtitle: 'Önbelleği temizle (320 MB)',
+                  subtitle: 'Önbelleği temizle (${_formatBytes(_cacheBytes)})',
                   onTap: () => _showClearCacheDialog(),
                 ),
                 _divider(isDark),
@@ -485,12 +639,21 @@ class _StoragePageState extends State<StoragePage> {
             children: [
               const Text('Network Usage', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               const SizedBox(height: 20),
-              _usageRow('Messages Sent', '12.5 MB'),
-              _usageRow('Messages Received', '45.2 MB'),
-              _usageRow('Media Sent', '320 MB'),
-              _usageRow('Media Received', '1.2 GB'),
-              _usageRow('Voice Calls', '85 MB'),
-              _usageRow('Video Calls', '450 MB'),
+              _usageRow('Messages Sent', '0 B'),
+              _usageRow('Messages Received', '0 B'),
+              _usageRow('Media Sent', '0 B'),
+              _usageRow('Media Received', '0 B'),
+              _usageRow('Voice Calls', '0 B'),
+              _usageRow('Video Calls', '0 B'),
+              const SizedBox(height: 8),
+              Text(
+                'Ağ kullanımı istatistikleri yakında eklenecek',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,

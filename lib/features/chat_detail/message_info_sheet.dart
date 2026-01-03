@@ -100,7 +100,7 @@ class _MessageInfoSheetState extends State<MessageInfoSheet> {
         ? sentAt.add(const Duration(seconds: 2)) 
         : null);
     final readAt = _readAt ?? (message.status == MessageStatus.read 
-        ? sentAt.add(const Duration(minutes: 1)) 
+        ? sentAt.add(const Duration(minutes: 1))
         : null);
 
     return Container(
@@ -203,10 +203,10 @@ class _MessageInfoSheetState extends State<MessageInfoSheet> {
                       title: 'İletildi',
                       contacts: deliveredAt != null
                           ? [
-                              _ReadInfo(
-                                name: chatName,
-                                time: _formatDateTime(deliveredAt),
-                              ),
+                        _ReadInfo(
+                          name: chatName,
+                          time: _formatDateTime(deliveredAt),
+                        ),
                             ]
                           : [],
                       emptyText: 'Henüz iletilmedi',

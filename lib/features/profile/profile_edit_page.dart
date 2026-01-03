@@ -18,10 +18,10 @@ class ProfileEditPage extends StatefulWidget {
 class _ProfileEditPageState extends State<ProfileEditPage> {
   final _nameController = TextEditingController();
   final _aboutController = TextEditingController();
-  final _usernameController = TextEditingController();
   String _phoneNumber = '';
   String? _email;
   String? _avatarUrl;
+  String _username = '';
   final _picker = ImagePicker();
   
   final _authService = AuthService.instance;
@@ -30,20 +30,12 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
   XFile? _pickedImage;
   bool _isEditingName = false;
   bool _isEditingAbout = false;
-  bool _isEditingUsername = false;
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isUploadingAvatar = false;
   
-  // Username validation
-  String? _usernameError;
-  bool _isCheckingUsername = false;
-  DateTime? _usernameChangedAt;
-  String? _originalUsername;
-  
   final _nameFocusNode = FocusNode();
   final _aboutFocusNode = FocusNode();
-  final _usernameFocusNode = FocusNode();
 
   // Önceden tanımlı hakkında seçenekleri (WhatsApp tarzı)
   final List<String> _aboutPresets = [
@@ -62,7 +54,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
     super.initState();
     _nameFocusNode.addListener(_onNameFocusChange);
     _aboutFocusNode.addListener(_onAboutFocusChange);
-    _usernameFocusNode.addListener(_onUsernameFocusChange);
     _loadProfile();
   }
 
@@ -77,25 +68,18 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       if (mounted && profile != null) {
         setState(() {
           _nameController.text = profile['full_name'] ?? '';
-          _usernameController.text = profile['username'] ?? '';
-          _originalUsername = profile['username'];
+          _username = profile['username'] ?? '';
           _aboutController.text = profile['bio'] ?? 'Hey there! I\'m using Near.';
           _avatarUrl = profile['avatar_url'];
           _phoneNumber = profile['phone'] ?? user?.phone ?? '';
           _email = user?.email;
-          
-          // Username değişiklik tarihi
-          if (profile['username_changed_at'] != null) {
-            _usernameChangedAt = DateTime.tryParse(profile['username_changed_at']);
-          }
-          
           _isLoading = false;
         });
       } else if (mounted && user != null) {
         // Profil yoksa user metadata'dan al
         setState(() {
           _nameController.text = user.userMetadata?['full_name'] ?? '';
-          _usernameController.text = user.userMetadata?['username'] ?? '';
+          _username = user.userMetadata?['username'] ?? '';
           _email = user.email;
           _isLoading = false;
         });
@@ -125,23 +109,12 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
     }
   }
 
-  void _onUsernameFocusChange() {
-    if (!_usernameFocusNode.hasFocus && _isEditingUsername) {
-      setState(() => _isEditingUsername = false);
-      if (_usernameError == null) {
-        _save();
-      }
-    }
-  }
-
   @override
   void dispose() {
     _nameController.dispose();
     _aboutController.dispose();
-    _usernameController.dispose();
     _nameFocusNode.dispose();
     _aboutFocusNode.dispose();
-    _usernameFocusNode.dispose();
     super.dispose();
   }
 
@@ -222,81 +195,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       if (mounted) {
         setState(() => _isUploadingAvatar = false);
         _toast('Fotoğraf yüklenemedi: ${e.toString().split(':').last}');
-      }
-    }
-  }
-
-  /// 90 gün kuralı kontrolü
-  bool get _canChangeUsername {
-    // İlk kullanıcı adı belirleme - her zaman izin ver
-    if (_originalUsername == null || _originalUsername!.isEmpty) {
-      return true;
-    }
-    // Değişiklik tarihi yoksa izin ver
-    if (_usernameChangedAt == null) {
-      return true;
-    }
-    // 90 gün geçti mi?
-    final daysSinceChange = DateTime.now().difference(_usernameChangedAt!).inDays;
-    return daysSinceChange >= 90;
-  }
-
-  int get _daysUntilUsernameChange {
-    if (_usernameChangedAt == null) return 0;
-    final daysSinceChange = DateTime.now().difference(_usernameChangedAt!).inDays;
-    return 90 - daysSinceChange;
-  }
-
-  /// Username değişikliğini kontrol et
-  Future<void> _validateUsername(String username) async {
-    // 90 gün kuralı
-    if (!_canChangeUsername && username != _originalUsername) {
-      setState(() => _usernameError = 'Kullanıcı adını ${_daysUntilUsernameChange} gün sonra değiştirebilirsiniz');
-      return;
-    }
-
-    if (username.isEmpty) {
-      setState(() => _usernameError = 'Kullanıcı adı gerekli');
-      return;
-    }
-
-    if (!SupabaseService.isValidUsername(username)) {
-      setState(() => _usernameError = '3-20 karakter, harf, rakam ve _ kullanın');
-      return;
-    }
-
-    // Aynı username ise kontrol etme
-    if (username.toLowerCase() == _originalUsername?.toLowerCase()) {
-      setState(() {
-        _usernameError = null;
-        _isCheckingUsername = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _isCheckingUsername = true;
-      _usernameError = null;
-    });
-
-    try {
-      final isAvailable = await _supabase.isUsernameAvailable(
-        username.toLowerCase(),
-        excludeUserId: _authService.userId,
-      );
-
-      if (mounted) {
-        setState(() {
-          _isCheckingUsername = false;
-          _usernameError = isAvailable ? null : 'Bu kullanıcı adı zaten alınmış';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isCheckingUsername = false;
-          _usernameError = 'Kontrol edilemedi';
-        });
       }
     }
   }
@@ -477,12 +375,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
   }
 
   void _save() {
-    // Username hatası varsa kaydetme
-    if (_usernameError != null) {
-      _toast(_usernameError!);
-      return;
-    }
-    // Backend'e kaydet
     _saveToBackend();
     HapticFeedback.lightImpact();
   }
@@ -497,45 +389,29 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       final userId = _authService.userId;
       if (userId == null) {
         _toast('Oturum açık değil');
+        setState(() => _isSaving = false);
         return;
       }
 
-      final username = _usernameController.text.trim().toLowerCase();
-      
-      // Username validasyonu
-      if (username.isNotEmpty && !SupabaseService.isValidUsername(username)) {
-        _toast('Geçersiz kullanıcı adı');
-        return;
-      }
-
-      // 90 gün kuralı kontrolü
-      final isUsernameChanged = username.toLowerCase() != _originalUsername?.toLowerCase();
-      if (isUsernameChanged && !_canChangeUsername) {
-        _toast('Kullanıcı adını ${_daysUntilUsernameChange} gün sonra değiştirebilirsiniz');
-        return;
-      }
-
-      // Profiles tablosunu güncelle
       final updateData = {
-        'id': userId,
         'full_name': _nameController.text.trim(),
-        'username': username.isNotEmpty ? username : 'user_${userId.substring(0, 8)}',
         'bio': _aboutController.text.trim(),
-        'phone': _phoneNumber.isNotEmpty ? _phoneNumber : null,
         'updated_at': DateTime.now().toIso8601String(),
       };
-
-      // Username değiştiyse tarihi güncelle
-      if (isUsernameChanged && username.isNotEmpty) {
-        updateData['username_changed_at'] = DateTime.now().toIso8601String();
+      
+      // Telefon varsa ekle
+      if (_phoneNumber.isNotEmpty) {
+        updateData['phone'] = _phoneNumber;
       }
 
-      await _supabase.client.from('profiles').upsert(updateData);
+      await _supabase.client
+          .from('profiles')
+          .update(updateData)
+          .eq('id', userId);
 
       // Auth metadata'yı da güncelle
       await _authService.updateProfile(
         fullName: _nameController.text.trim(),
-        username: username,
       );
 
       debugPrint('Profile saved to Supabase');
@@ -545,13 +421,11 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
     } catch (e) {
       debugPrint('Error saving profile: $e');
       if (mounted) {
-        // Unique constraint hatası kontrolü
         final errorMsg = e.toString();
         if (errorMsg.contains('duplicate') || errorMsg.contains('unique')) {
           _toast('Bu kullanıcı adı zaten kullanılıyor');
-          setState(() => _usernameError = 'Bu kullanıcı adı zaten alınmış');
         } else {
-          _toast('Kaydetme başarısız: ${errorMsg.split(':').last}');
+          _toast('Kaydetme başarısız');
         }
       }
     } finally {
@@ -794,6 +668,19 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                     color: isDark ? Colors.white12 : Colors.black12,
                   ),
 
+                  _ProfileInfoTile(
+                    icon: Icons.alternate_email_rounded,
+                    label: 'Kullanıcı Adı',
+                    value: _username.isNotEmpty ? '@$_username' : 'Henüz belirlenmedi',
+                    isDark: isDark,
+                  ),
+
+                  Divider(
+                    height: 1,
+                    indent: 56,
+                    color: isDark ? Colors.white12 : Colors.black12,
+                  ),
+
                   // Email (salt okunur)
                   if (_email != null && _email!.isNotEmpty)
                     _ProfileInfoTile(
@@ -823,37 +710,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                     height: 1,
                     indent: 56,
                     color: isDark ? Colors.white12 : Colors.black12,
-                  ),
-
-                  // Kullanıcı Adı
-                  _ProfileField(
-                    icon: Icons.alternate_email_rounded,
-                    label: 'Kullanıcı Adı',
-                    value: _usernameController.text,
-                    hint: 'Kullanıcı adı',
-                    isEditing: _isEditingUsername,
-                    controller: _usernameController,
-                    focusNode: _usernameFocusNode,
-                    onTap: () {
-                      setState(() => _isEditingUsername = true);
-                      _usernameFocusNode.requestFocus();
-                    },
-                    onChanged: (val) {
-                      setState(() => _isEditingUsername = true);
-                      _validateUsername(val.trim());
-                    },
-                    onEditingComplete: () {
-                      setState(() => _isEditingUsername = false);
-                      if (_usernameError == null) _save();
-                    },
-                    isDark: isDark,
-                    maxLength: 20,
-                    helperText: _canChangeUsername
-                        ? 'Harf, rakam ve _ kullanabilirsiniz (90 günde 1 değiştirilebilir)'
-                        : '${_daysUntilUsernameChange} gün sonra değiştirebilirsiniz',
-                    errorText: _usernameError,
-                    isLoading: _isCheckingUsername,
-                    enabled: _canChangeUsername,
                   ),
                 ],
               ),
