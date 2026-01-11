@@ -944,7 +944,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   void _startCall({required bool video}) {
-    context.push('/call/${_chat.id}?video=$video');
+    // Grup sohbetinde arama yapamazsın (Faz 6 sadece 1-1)
+    if (_isGroupChat) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Grup araması henüz desteklenmiyor'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Diğer kullanıcının ID'sini al
+    final otherUser = chatService.getOtherUser(_supabaseChat!);
+    if (otherUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Kullanıcı bulunamadı'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final otherUserId = otherUser['id'] as String?;
+    if (otherUserId == null) return;
+
+    context.push('/call/$otherUserId?video=$video');
   }
 
   void _openForwardPage(Message m) {

@@ -21,15 +21,16 @@
 | 3 | Grup Sohbetleri | ✅ | Evet | 23.12.2024 |
 | 4 | Medya Paylaşımı | ✅ | Evet | 25.12.2024 |
 | 5 | Story Sistemi | ✅ | Evet | 28.12.2024 |
-| 6 | Sesli/Görüntülü Arama (1-1) | 🔄 | **Evet** | Backend: 11.01.2026 |
+| 6 | Sesli/Görüntülü Arama (1-1) | 🔄 | **Evet** | Frontend: 11.01.2026 |
 | 7 | Push Notifications | ⬜ | **Evet** | - |
 | 8 | Temel Güvenlik | ⬜ | **Evet** | - |
 | 9 | Grup Araması (SFU) | ⬜ | Hayır (v1.1+) | - |
 | 10 | Offline & Sync | ⬜ | Hayır (v1.1+) | - |
 | 11 | Deployment | ⬜ | **Evet** | - |
 
-**v1.0 için Tamamlanması Gereken:** Faz 6, 7, 8, 11  
-**Tahmini Süre:** 3-4 hafta
+**v1.0 için Tamamlanması Gereken:** Faz 6 (devam), 7, 8, 11  
+**Faz 6 İlerleme:** ~70% (Giden arama çalışıyor, gelen arama testi gerekli)  
+**Tahmini Süre:** 2-3 hafta
 
 ---
 
@@ -122,25 +123,47 @@
 **Hedef:** WebRTC ile gerçek zamanlı P2P arama (1-1 sadece)  
 **Gerekli Paketler:** `flutter_webrtc`, `flutter_callkit_incoming`  
 **Backend Durumu:** ✅ Supabase şeması hazır (11 Ocak 2026)  
+**Frontend Durumu:** 🔄 Temel arama altyapısı hazır (11 Ocak 2026)  
 **Not:** Grup araması v1.1+ olarak planlanmıştır (SFU backend gerekir)
 
 | # | Görev | Durum | Not |
 |---|-------|-------|-----|
-| 6.0 | Supabase şeması | ✅ | calls tablosu güncellendi, ice_candidates oluşturuldu |
-| 6.1 | flutter_webrtc paketi | ⬜ | WebRTC P2P implementasyonu |
-| 6.2 | WebRTC signaling | ⬜ | Supabase Realtime kullanılacak |
-| 6.3 | Sesli arama (1-1) | ⬜ | Audio stream, P2P direkt bağlantı |
-| 6.4 | Görüntülü arama (1-1) | ⬜ | Video stream + UI, P2P direkt bağlantı |
-| 6.5 | CallKit (iOS) | ⬜ | Native arama UI entegrasyonu |
-| 6.6 | ConnectionService (Android) | ⬜ | Native arama UI entegrasyonu |
-| 6.7 | Arama geçmişi | ⬜ | calls tablosu hazır |
+| 6.0 | Supabase şeması | ✅ | calls tablosu + ice_candidates + RLS |
+| 6.1 | flutter_webrtc paketi | ✅ | ^1.2.1 yüklendi, iOS/Android izinleri ayarlandı |
+| 6.2 | WebRTC signaling | ✅ | Supabase Realtime + calls/ice_candidates tabloları |
+| 6.3 | WebRTCService | ✅ | P2P bağlantı, ICE, Offer/Answer, stream yönetimi |
+| 6.4 | CallScreen UI | ✅ | Arama ekranı, kontroller (mute/speaker/video), timer |
+| 6.5 | Giden arama | ✅ | startCall() çalışıyor, kullanıcı bilgisi gösteriliyor |
+| 6.6 | Gelen arama (IncomingCallHandler) | 🔄 | Temel yapı hazır, test edilecek |
+| 6.7 | CallKit (iOS) | 🔄 | flutter_callkit_incoming kurulu, entegrasyon gerekli |
+| 6.8 | ConnectionService (Android) | 🔄 | flutter_callkit_incoming kurulu, entegrasyon gerekli |
+| 6.9 | Arama geçmişi | ⬜ | calls tablosu hazır, UI gerekli |
+
+**Tamamlanan Dosyalar (11 Ocak 2026):**
+- `lib/shared/webrtc_service.dart` (~550 satır): P2P WebRTC implementasyonu
+- `lib/features/calls/call_screen.dart` (~690 satır): Arama UI
+- `lib/shared/incoming_call_handler.dart` (~200 satır): Gelen arama yönetimi
+- `lib/features/chat_detail/chat_detail_page.dart`: Arama butonları eklendi
+- `lib/shared/chat_service.dart`: getUserById() metodu eklendi
+- `pubspec.yaml`: flutter_webrtc ^1.2.1, flutter_callkit_incoming ^2.0.2+3
+- `ios/Podfile`: Kamera/mikrofon izinleri
+- `android/app/src/main/AndroidManifest.xml`: Arama izinleri
 
 **Backend (Tamamlandı):**
-- `calls` tablosu: callee_id, offer_sdp, answer_sdp, ringing_at, accepted_at, connected_at, end_reason, quality_score, metadata
+- `calls` tablosu: callee_id, offer_sdp, answer_sdp, type (voice/video), status, timestamps
 - `ice_candidates` tablosu: call_id, sender_id, candidate, sdp_mid, sdp_m_line_index, processed
 - RLS policies: Kullanıcı sadece kendi aramalarını görebilir/güncelleyebilir
 - Realtime: calls ve ice_candidates tabloları için aktif
-- Helper functions: is_user_in_call(), calculate_call_duration() trigger |
+
+**Test Edilen (Android Fiziksel Cihaz - 11 Ocak 2026):**
+- ✅ Arama başlatma çalışıyor
+- ✅ Kullanıcı bilgisi (isim) doğru gösteriliyor
+- ✅ WebRTC peer connection kuruluyor
+- ✅ ICE candidates oluşturuluyor
+- ✅ Offer/SDP gönderiliyor
+- ✅ Mute/Speaker butonları çalışıyor
+- ⬜ Gelen arama testi (2. cihaz gerekli)
+- ⬜ Görüntülü arama testi |
 
 ### Faz 7: Push Notifications & Firebase (1 hafta)
 **Hedef:** Uygulama kapalıyken bildirim  

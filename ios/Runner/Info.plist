@@ -29,11 +29,11 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Profil fotoğrafı seçmek için fotoğraflarına erişmemiz gerekiyor.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Profil fotoğrafı çekmek için kameraya erişmemiz gerekiyor.</string>
+	<string>Profil fotoğrafı çekmek ve görüntülü arama için kameraya erişmemiz gerekiyor.</string>
 
 	<!-- ✅ Permissions for voice messages (record) -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sesli mesaj kaydetmek için mikrofona erişmemiz gerekiyor.</string>
+	<string>Sesli mesaj ve arama için mikrofona erişmemiz gerekiyor.</string>
 	
 	<!-- ✅ Permissions for location sharing (geolocator) -->
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -44,6 +44,15 @@
 	<!-- ✅ Permissions for contact sharing (flutter_contacts) -->
 	<key>NSContactsUsageDescription</key>
 	<string>Kişi paylaşmak için rehberine erişmemiz gerekiyor.</string>
+
+	<!-- ✅ Background Modes for VoIP calls (6.0) -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>voip</string>
+		<string>audio</string>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

@@ -42,6 +42,7 @@ import '../shared/widgets/qr_code.dart';
 
 import '../shared/accessibility.dart';
 import '../shared/network_service.dart';
+import '../shared/incoming_call_handler.dart';
 import '../main.dart'; // AppLifecycleObserver için
 
 /// Deep Link URL Scheme: near://
@@ -75,6 +76,35 @@ class _NearAppState extends State<NearApp> {
     
     // Heartbeat'i başlat (uygulama açıldığında online ol)
     _lifecycleObserver.startHeartbeat();
+    
+    // NOT: Gelen arama callback'leri şimdilik devre dışı
+    // _setupIncomingCallHandlers();
+  }
+
+  void _setupIncomingCallHandlers() {
+    final callHandler = IncomingCallHandler.instance;
+    
+    // Gelen arama bildirimi kabul edildiğinde
+    callHandler.onCallAccepted = (callId) {
+      debugPrint('NearApp: Call accepted: $callId');
+      // Sadece kullanıcı giriş yaptıysa ve ana ekrandaysa yönlendir
+      final currentLocation = _router.routerDelegate.currentConfiguration.fullPath;
+      if (currentLocation != '/splash' && 
+          currentLocation != '/auth' && 
+          currentLocation != '/onboarding') {
+        _router.push('/call/$callId?video=false&incoming=true');
+      }
+    };
+    
+    // Gelen arama bildirimi reddedildiğinde
+    callHandler.onCallRejected = (callId) {
+      debugPrint('NearApp: Call rejected: $callId');
+    };
+    
+    // Arama sonlandığında
+    callHandler.onCallEnded = (callId) {
+      debugPrint('NearApp: Call ended: $callId');
+    };
   }
 
   @override

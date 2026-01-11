@@ -79,6 +79,12 @@ dependencies:
   
   # ✅ Video player for video messages (4.2)
   video_player: ^2.9.2
+  
+  # ✅ WebRTC for voice/video calls (6.0)
+  flutter_webrtc: ^1.2.1
+  
+  # ✅ CallKit integration for iOS native call UI (6.5)
+  flutter_callkit_incoming: ^2.0.2+3
 
 dev_dependencies:
   flutter_test:

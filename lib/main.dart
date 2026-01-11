@@ -10,6 +10,7 @@ import 'shared/chat_service.dart';
 import 'shared/chat_store.dart';
 import 'shared/contact_service.dart';
 import 'shared/hive_adapters.dart';
+import 'shared/incoming_call_handler.dart';
 import 'shared/network_service.dart';
 import 'shared/settings_service.dart';
 import 'shared/story_service.dart';
@@ -59,6 +60,13 @@ void main() async {
   
   // Ağ durumu servisini başlat
   await NetworkService.instance.init();
+  
+  // NOT: IncomingCallHandler şimdilik devre dışı - sorunlar giderilince aktifleştirilecek
+  // try {
+  //   await IncomingCallHandler.instance.initialize();
+  // } catch (e) {
+  //   debugPrint('IncomingCallHandler init error: $e');
+  // }
   
   runApp(const NearApp());
 }

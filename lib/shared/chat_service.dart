@@ -395,6 +395,30 @@ class ChatService extends ChangeNotifier {
     }
   }
 
+  /// UUID ile tek kullanıcı bilgisi al
+  Future<Map<String, dynamic>?> getUserById(String userId) async {
+    if (userId.isEmpty) return null;
+
+    try {
+      debugPrint('ChatService: Getting user by ID: $userId');
+      final result = await _supabase.client
+          .from('profiles')
+          .select('id, username, full_name, avatar_url, bio, is_online, last_seen')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (result != null) {
+        debugPrint('ChatService: Found user: ${result['username']} (${result['full_name']})');
+      } else {
+        debugPrint('ChatService: User not found for ID: $userId');
+      }
+      return result;
+    } catch (e) {
+      debugPrint('ChatService: Error getting user by ID: $e');
+      return null;
+    }
+  }
+
   /// Telefon numaralarına göre kullanıcıları bul (rehber entegrasyonu için)
   Future<List<Map<String, dynamic>>> findUsersByPhones(
     List<String> phoneNumbers,
