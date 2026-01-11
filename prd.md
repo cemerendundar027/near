@@ -21,13 +21,14 @@
 | 3 | Grup Sohbetleri | ✅ | Evet | 23.12.2024 |
 | 4 | Medya Paylaşımı | ✅ | Evet | 25.12.2024 |
 | 5 | Story Sistemi | ✅ | Evet | 28.12.2024 |
-| 6 | Sesli/Görüntülü Arama | 🔄 | **Evet** | Backend: 11.01.2026 |
+| 6 | Sesli/Görüntülü Arama (1-1) | 🔄 | **Evet** | Backend: 11.01.2026 |
 | 7 | Push Notifications | ⬜ | **Evet** | - |
 | 8 | Temel Güvenlik | ⬜ | **Evet** | - |
-| 9 | Offline & Sync | ⬜ | Hayır (v1.1+) | - |
-| 10 | Deployment | ⬜ | **Evet** | - |
+| 9 | Grup Araması (SFU) | ⬜ | Hayır (v1.1+) | - |
+| 10 | Offline & Sync | ⬜ | Hayır (v1.1+) | - |
+| 11 | Deployment | ⬜ | **Evet** | - |
 
-**v1.0 için Tamamlanması Gereken:** Faz 6, 7, 8, 10  
+**v1.0 için Tamamlanması Gereken:** Faz 6, 7, 8, 11  
 **Tahmini Süre:** 3-4 hafta
 
 ---
@@ -117,18 +118,19 @@
 
 ## ⬜ YAPILACAK FAZLAR
 
-### Faz 6: Sesli/Görüntülü Arama (2-3 hafta)
-**Hedef:** WebRTC ile gerçek zamanlı arama  
+### Faz 6: Sesli/Görüntülü Arama - 1-1 (2-3 hafta)
+**Hedef:** WebRTC ile gerçek zamanlı P2P arama (1-1 sadece)  
 **Gerekli Paketler:** `flutter_webrtc`, `flutter_callkit_incoming`  
-**Backend Durumu:** ✅ Supabase şeması hazır (11 Ocak 2026)
+**Backend Durumu:** ✅ Supabase şeması hazır (11 Ocak 2026)  
+**Not:** Grup araması v1.1+ olarak planlanmıştır (SFU backend gerekir)
 
 | # | Görev | Durum | Not |
 |---|-------|-------|-----|
 | 6.0 | Supabase şeması | ✅ | calls tablosu güncellendi, ice_candidates oluşturuldu |
-| 6.1 | flutter_webrtc paketi | ⬜ | WebRTC implementasyonu |
+| 6.1 | flutter_webrtc paketi | ⬜ | WebRTC P2P implementasyonu |
 | 6.2 | WebRTC signaling | ⬜ | Supabase Realtime kullanılacak |
-| 6.3 | Sesli arama | ⬜ | Audio stream |
-| 6.4 | Görüntülü arama | ⬜ | Video stream + UI |
+| 6.3 | Sesli arama (1-1) | ⬜ | Audio stream, P2P direkt bağlantı |
+| 6.4 | Görüntülü arama (1-1) | ⬜ | Video stream + UI, P2P direkt bağlantı |
 | 6.5 | CallKit (iOS) | ⬜ | Native arama UI entegrasyonu |
 | 6.6 | ConnectionService (Android) | ⬜ | Native arama UI entegrasyonu |
 | 6.7 | Arama geçmişi | ⬜ | calls tablosu hazır |
@@ -170,65 +172,79 @@
 
 **Not:** E2E encryption (Signal protokolü) v2.0 için planlanmış
 
-### Faz 9: Offline & Sync (v1.1+)
+### Faz 9: Grup Araması (v1.1+, 2-3 hafta)
+**Hedef:** SFU (Selective Forwarding Unit) kullanarak grup sesli/görüntülü arama  
+**Gerekli Paketler:** `flutter_webrtc`, `mediasoup-client` veya özel SFU backend  
+**Teknik:** P2P mesh yerine merkezi SFU sunucusu (CPU/bandwidth optimizasyon)
+
+| # | Görev | Durum | Not |
+|---|-------|-------|-----|
+| 9.1 | SFU backend kurulumu | ⬜ | Mediasoup, Jitsi veya özel |
+| 9.2 | Group signaling | ⬜ | Supabase + custom WebSocket |
+| 9.3 | Grup sesli arama | ⬜ | Audio streams merging |
+| 9.4 | Grup görüntülü arama | ⬜ | Video grid + pip |
+| 9.5 | Screen sharing | ⬜ | Desktop/tablet desteği |
+| 9.6 | Recording (opsiyonel) | ⬜ | Arama kaydı |
+
+### Faz 10: Offline & Sync (v1.1+)
 **Not:** v1.0'da temel Hive cache mevcut
 
 | # | Görev | Durum | Not |
 |---|-------|-------|-----|
-| 9.1 | Local DB | 🔄 | Hive kurulu (basic cache) |
-| 9.2 | Offline mesaj kuyruğu | ⬜ | Retry mekanizması |
-| 9.3 | Sync mekanizması | ⬜ | Conflict resolution |
-| 9.4 | Chat backup | ⬜ | Export/Import |
-| 9.5 | Chat restore | ⬜ | Cloud backup |
+| 10.1 | Local DB | 🔄 | Hive kurulu (basic cache) |
+| 10.2 | Offline mesaj kuyruğu | ⬜ | Retry mekanizması |
+| 10.3 | Sync mekanizması | ⬜ | Conflict resolution |
+| 10.4 | Chat backup | ⬜ | Export/Import |
+| 10.5 | Chat restore | ⬜ | Cloud backup |
 
-### Faz 10: Deployment (1-2 hafta)
+### Faz 11: Deployment (v1.0, 1-2 hafta)
 
-#### 10.A - Yasal & Marka
+#### 11.A - Yasal & Marka
 | # | Görev | Durum |
 |---|-------|-------|
-| 10.A.1 | Privacy Policy | ⬜ |
-| 10.A.2 | Terms of Service | ⬜ |
-| 10.A.3 | App Icon | ⬜ |
-| 10.A.4 | Splash Screen | ⬜ |
-| 10.A.5 | Store Graphics | ⬜ |
-| 10.A.6 | App Description | ⬜ |
+| 11.A.1 | Privacy Policy | ⬜ |
+| 11.A.2 | Terms of Service | ⬜ |
+| 11.A.3 | App Icon | ⬜ |
+| 11.A.4 | Splash Screen | ⬜ |
+| 11.A.5 | Store Graphics | ⬜ |
+| 11.A.6 | App Description | ⬜ |
 
-#### 10.B - Konfigürasyon
+#### 11.B - Konfigürasyon
 | # | Görev | Durum |
 |---|-------|-------|
-| 10.B.1 | Environment variables | ⬜ |
-| 10.B.2 | Production Supabase | ⬜ |
-| 10.B.3 | Bundle ID/Package name | ⬜ |
-| 10.B.4 | App versioning | ⬜ |
-| 10.B.5 | ProGuard/R8 (Android) | ⬜ |
+| 11.B.1 | Environment variables | ⬜ |
+| 11.B.2 | Production Supabase | ⬜ |
+| 11.B.3 | Bundle ID/Package name | ⬜ |
+| 11.B.4 | App versioning | ⬜ |
+| 11.B.5 | ProGuard/R8 (Android) | ⬜ |
 
-#### 10.C - iOS Deployment
+#### 11.C - iOS Deployment
 | # | Görev | Durum |
 |---|-------|-------|
-| 10.C.1 | Apple Developer hesabı | ⬜ |
-| 10.C.2 | App Store Connect | ⬜ |
-| 10.C.3 | Certificates & Profiles | ⬜ |
-| 10.C.4 | TestFlight beta | ⬜ |
-| 10.C.5 | App Store review | ⬜ |
+| 11.C.1 | Apple Developer hesabı | ⬜ |
+| 11.C.2 | App Store Connect | ⬜ |
+| 11.C.3 | Certificates & Profiles | ⬜ |
+| 11.C.4 | TestFlight beta | ⬜ |
+| 11.C.5 | App Store review | ⬜ |
 
-#### 10.D - Android Deployment
+#### 11.D - Android Deployment
 | # | Görev | Durum |
 |---|-------|-------|
-| 10.D.1 | Google Play Console | ⬜ |
-| 10.D.2 | Signing key | ⬜ |
-| 10.D.3 | App Bundle (AAB) | ⬜ |
-| 10.D.4 | Internal testing | ⬜ |
-| 10.D.5 | Play Store review | ⬜ |
+| 11.D.1 | Google Play Console | ⬜ |
+| 11.D.2 | Signing key | ⬜ |
+| 11.D.3 | App Bundle (AAB) | ⬜ |
+| 11.D.4 | Internal testing | ⬜ |
+| 11.D.5 | Play Store review | ⬜ |
 
-#### 10.E - Test & Monitoring
+#### 11.E - Test & Monitoring
 | # | Görev | Durum |
 |---|-------|-------|
-| 10.E.1 | Unit tests | ⬜ |
-| 10.E.2 | Widget tests | ⬜ |
-| 10.E.3 | Integration tests | ⬜ |
-| 10.E.4 | CI/CD pipeline | ⬜ |
-| 10.E.5 | Crash reporting | ✅ |
-| 10.E.6 | Performance monitoring | ⬜ |
+| 11.E.1 | Unit tests | ⬜ |
+| 11.E.2 | Widget tests | ⬜ |
+| 11.E.3 | Integration tests | ⬜ |
+| 11.E.4 | CI/CD pipeline | ⬜ |
+| 11.E.5 | Crash reporting | ✅ |
+| 11.E.6 | Performance monitoring | ⬜ |
 
 ---
 
