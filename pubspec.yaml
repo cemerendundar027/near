@@ -33,6 +33,12 @@ dependencies:
   # ✅ Biometric authentication
   local_auth: ^2.3.0
   
+  # ✅ Device information
+  device_info_plus: ^10.1.0
+  
+  # ✅ Time ago formatting
+  timeago: ^3.7.0
+  
   # ✅ Network connectivity
   connectivity_plus: ^6.1.4
   

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
+import 'chat_store.dart';
 
 /// Supabase Chat Service - Gerçek zamanlı mesajlaşma
 class ChatService extends ChangeNotifier {
@@ -9,25 +10,43 @@ class ChatService extends ChangeNotifier {
   static final instance = ChatService._();
 
   final _supabase = SupabaseService.instance;
-  
+
   // Realtime subscriptions
   RealtimeChannel? _chatsChannel;
   RealtimeChannel? _messagesChannel;
-  
+  RealtimeChannel? _globalMessagesChannel;
+  RealtimeChannel? _messageStatusChannel;
+
   // Cached data
   List<Map<String, dynamic>> _chats = [];
-  Map<String, List<Map<String, dynamic>>> _messagesByChat = {};
-  
+  final Map<String, List<Map<String, dynamic>>> _messagesByChat = {};
+
+  // Unread count cache - chatId -> count
+  final Map<String, int> _unreadCounts = {};
+
+  // Privacy cache
+  bool? _readReceiptsEnabled;
+
   // Loading states
   bool _isLoadingChats = false;
   bool _isLoadingMessages = false;
-  
+
   // Getters
   List<Map<String, dynamic>> get chats => _chats;
   bool get isLoadingChats => _isLoadingChats;
   bool get isLoadingMessages => _isLoadingMessages;
-  
+  Map<String, int> get unreadCounts => Map.unmodifiable(_unreadCounts);
+
+  /// Toplam okunmamış mesaj sayısı
+  int get totalUnreadCount => _unreadCounts.values.fold(0, (a, b) => a + b);
+
   String? get currentUserId => _supabase.currentUser?.id;
+
+  /// Read receipts cache'ini güncelle (privacy ayarı değiştiğinde çağrılır)
+  void updateReadReceiptsCache(bool enabled) {
+    _readReceiptsEnabled = enabled;
+    debugPrint('ChatService: Read receipts cache updated: $enabled');
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // INITIALIZATION
@@ -39,17 +58,22 @@ class ChatService extends ChangeNotifier {
       debugPrint('ChatService: User not logged in');
       return;
     }
-    
+
     await loadChats();
     _subscribeToChats();
+    _subscribeToGlobalMessages();
+    _subscribeToMessageStatus();
     await setOnlineStatus(true); // Online ol
   }
 
   /// Servisi temizle
+  @override
   void dispose() {
     setOnlineStatus(false); // Offline ol
     _chatsChannel?.unsubscribe();
     _messagesChannel?.unsubscribe();
+    _globalMessagesChannel?.unsubscribe();
+    _messageStatusChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -63,30 +87,36 @@ class ChatService extends ChangeNotifier {
       debugPrint('ChatService: loadChats - No user logged in');
       return;
     }
-    
+
     debugPrint('ChatService: loadChats - User: $currentUserId');
     _isLoadingChats = true;
     notifyListeners();
 
     try {
-      // Kullanıcının katıldığı chat_participants'ları al
+      // Kullanıcının katıldığı chat_participants'ları al (last_read_at dahil)
       final participations = await _supabase.client
           .from('chat_participants')
-          .select('chat_id')
+          .select('chat_id, last_read_at')
           .eq('user_id', currentUserId!);
 
       debugPrint('ChatService: Found ${participations.length} participations');
 
       if (participations.isEmpty) {
         _chats = [];
+        _unreadCounts.clear();
         _isLoadingChats = false;
         notifyListeners();
         return;
       }
 
-      final chatIds = (participations as List)
-          .map((p) => p['chat_id'] as String)
-          .toList();
+      // Participation bilgilerini map'e al
+      final participationMap = <String, String?>{};
+      final chatIds = <String>[];
+      for (final p in participations) {
+        final chatId = p['chat_id'] as String;
+        chatIds.add(chatId);
+        participationMap[chatId] = p['last_read_at'] as String?;
+      }
 
       // Chat detaylarını ve son mesajı al
       final chatsData = await _supabase.client
@@ -95,17 +125,18 @@ class ChatService extends ChangeNotifier {
             *,
             chat_participants!inner(
               user_id,
-              profiles!inner(id, username, full_name, avatar_url, is_online, last_seen)
+              profiles!inner(id, username, full_name, avatar_url, is_online, last_seen, mood_aura)
             )
           ''')
           .inFilter('id', chatIds)
           .order('last_message_at', ascending: false);
 
-      // Her chat için son mesajı formatla
+      // Her chat için son mesajı formatla ve unread count hesapla
       final List<Map<String, dynamic>> formattedChats = [];
       for (final chat in chatsData) {
         final chatId = chat['id'] as String;
-        
+        final lastReadAt = participationMap[chatId];
+
         // Son mesajı al
         final lastMessageResult = await _supabase.client
             .from('messages')
@@ -114,17 +145,45 @@ class ChatService extends ChangeNotifier {
             .order('created_at', ascending: false)
             .limit(1)
             .maybeSingle();
-        
+
         String lastMessage = chat['last_message'] ?? '';
         if (lastMessageResult != null) {
           final content = lastMessageResult['content'] as String? ?? '';
           final type = lastMessageResult['type'] as String? ?? 'text';
           lastMessage = _formatLastMessageByType(content, type);
         }
-        
+
+        // Unread count hesapla
+        int unreadCount = 0;
+        try {
+          if (lastReadAt == null) {
+            // Hiç okumamış, tüm gelen mesajları say
+            final countResult = await _supabase.client
+                .from('messages')
+                .select('id')
+                .eq('chat_id', chatId)
+                .neq('sender_id', currentUserId!);
+            unreadCount = countResult.length;
+          } else {
+            // Son okumadan sonraki mesajları say
+            final countResult = await _supabase.client
+                .from('messages')
+                .select('id')
+                .eq('chat_id', chatId)
+                .neq('sender_id', currentUserId!)
+                .gt('created_at', lastReadAt);
+            unreadCount = countResult.length;
+          }
+        } catch (e) {
+          debugPrint('ChatService: Error calculating unread for $chatId: $e');
+        }
+
+        _unreadCounts[chatId] = unreadCount;
+
         formattedChats.add({
           ...chat,
           'last_message': lastMessage,
+          'unread_count': unreadCount,
         });
       }
 
@@ -136,6 +195,57 @@ class ChatService extends ChangeNotifier {
 
     _isLoadingChats = false;
     notifyListeners();
+  }
+
+  /// Kullanıcıya mesaj gönderilip gönderilemeyeceğini kontrol et
+  /// privacy_messages = 'everyone' -> herkes gönderebilir
+  /// privacy_messages = 'contacts' -> sadece kişileri gönderebilir
+  Future<Map<String, dynamic>> canSendMessageTo(String otherUserId) async {
+    if (currentUserId == null) {
+      return {'allowed': false, 'reason': 'not_logged_in'};
+    }
+
+    try {
+      // Karşı kullanıcının gizlilik ayarını al
+      final profile = await _supabase.client
+          .from('profiles')
+          .select('privacy_messages')
+          .eq('id', otherUserId)
+          .maybeSingle();
+
+      final privacySetting = profile?['privacy_messages'] ?? 'everyone';
+
+      // Herkes gönderebilir
+      if (privacySetting == 'everyone') {
+        return {'allowed': true};
+      }
+
+      // Sadece kişileri - rehberinde mi kontrol et
+      if (privacySetting == 'contacts') {
+        // Karşı kullanıcının contacts tablosunda biz var mıyız?
+        final contact = await _supabase.client
+            .from('contacts')
+            .select('id')
+            .eq('user_id', otherUserId)
+            .eq('contact_id', currentUserId!)
+            .maybeSingle();
+
+        if (contact != null) {
+          return {'allowed': true};
+        } else {
+          return {
+            'allowed': false,
+            'reason': 'contacts_only',
+            'message': 'Bu kullanıcı sadece kişilerinden mesaj alıyor'
+          };
+        }
+      }
+
+      return {'allowed': true};
+    } catch (e) {
+      debugPrint('ChatService: Error checking message permission: $e');
+      return {'allowed': true}; // Hata durumunda izin ver
+    }
   }
 
   /// Yeni birebir sohbet oluştur
@@ -152,10 +262,7 @@ class ChatService extends ChangeNotifier {
       // Yeni chat oluştur
       final chatResponse = await _supabase.client
           .from('chats')
-          .insert({
-            'is_group': false,
-            'created_by': currentUserId,
-          })
+          .insert({'is_group': false, 'created_by': currentUserId})
           .select()
           .single();
 
@@ -215,7 +322,7 @@ class ChatService extends ChangeNotifier {
             .select('is_group')
             .eq('id', chatId)
             .single();
-        
+
         if (chatInfo['is_group'] == false) {
           return chatId;
         }
@@ -237,15 +344,23 @@ class ChatService extends ChangeNotifier {
     if (query.trim().isEmpty) return [];
 
     try {
+      debugPrint('ChatService: Searching users with query: "$query"');
+      debugPrint('ChatService: Current user ID: $currentUserId');
+
       // Username veya full_name içinde ara
       final results = await _supabase.client
           .from('profiles')
-          .select('id, username, full_name, avatar_url, bio, is_online, last_seen')
+          .select(
+            'id, username, full_name, avatar_url, bio, is_online, last_seen',
+          )
           .or('username.ilike.%$query%,full_name.ilike.%$query%')
           .neq('id', currentUserId ?? '') // Kendini hariç tut
           .limit(20);
 
       debugPrint('ChatService: Found ${results.length} users for "$query"');
+      for (var user in results) {
+        debugPrint('  - ${user['username']} (${user['full_name']})');
+      }
       return List<Map<String, dynamic>>.from(results);
     } catch (e) {
       debugPrint('ChatService: Error searching users: $e');
@@ -256,17 +371,65 @@ class ChatService extends ChangeNotifier {
   /// Tüm kullanıcıları getir (contact listesi için)
   Future<List<Map<String, dynamic>>> getAllUsers() async {
     try {
+      debugPrint('ChatService: Loading all users, excluding: $currentUserId');
+
       final results = await _supabase.client
           .from('profiles')
-          .select('id, username, full_name, avatar_url, bio, is_online, last_seen')
+          .select(
+            'id, username, full_name, avatar_url, bio, is_online, last_seen',
+          )
           .neq('id', currentUserId ?? '')
           .order('full_name', ascending: true)
           .limit(100);
 
       debugPrint('ChatService: Loaded ${results.length} users from Supabase');
+      for (var user in results) {
+        debugPrint(
+          '  - ${user['username']} (${user['full_name']}) id: ${user['id']}',
+        );
+      }
       return List<Map<String, dynamic>>.from(results);
     } catch (e) {
       debugPrint('ChatService: Error loading users: $e');
+      return [];
+    }
+  }
+
+  /// Telefon numaralarına göre kullanıcıları bul (rehber entegrasyonu için)
+  Future<List<Map<String, dynamic>>> findUsersByPhones(
+    List<String> phoneNumbers,
+  ) async {
+    if (phoneNumbers.isEmpty) return [];
+
+    try {
+      debugPrint(
+        'ChatService: Finding users by ${phoneNumbers.length} phone numbers',
+      );
+
+      // Telefon numaralarını normalize et ve filtrele
+      final normalizedPhones = phoneNumbers
+          .map((p) => p.replaceAll(RegExp(r'[^\d+]'), ''))
+          .where((p) => p.length >= 10)
+          .toSet()
+          .toList();
+
+      if (normalizedPhones.isEmpty) return [];
+
+      // Supabase'de IN query ile ara
+      final results = await _supabase.client
+          .from('profiles')
+          .select(
+            'id, username, full_name, avatar_url, bio, is_online, last_seen, phone',
+          )
+          .inFilter('phone', normalizedPhones)
+          .neq('id', currentUserId ?? '');
+
+      debugPrint(
+        'ChatService: Found ${results.length} users from phone contacts',
+      );
+      return List<Map<String, dynamic>>.from(results);
+    } catch (e) {
+      debugPrint('ChatService: Error finding users by phones: $e');
       return [];
     }
   }
@@ -296,6 +459,10 @@ class ChatService extends ChangeNotifier {
     if (currentUserId == null) return null;
 
     try {
+      debugPrint(
+        'ChatService: Creating group "$name" with ${memberIds.length} members',
+      );
+
       // Grup oluştur
       final chatResponse = await _supabase.client
           .from('chats')
@@ -309,20 +476,29 @@ class ChatService extends ChangeNotifier {
           .single();
 
       final chatId = chatResponse['id'] as String;
+      debugPrint('ChatService: Group created with ID: $chatId');
 
       // Tüm üyeleri ekle (oluşturan dahil)
-      final participants = [currentUserId!, ...memberIds]
-          .map((userId) => {
-                'chat_id': chatId,
-                'user_id': userId,
-                'role': userId == currentUserId ? 'admin' : 'member',
-              })
+      final allMemberIds = <String>{
+        currentUserId!,
+        ...memberIds,
+      }.toList(); // Set ile duplicate engelle
+      final participants = allMemberIds
+          .map(
+            (userId) => {
+              'chat_id': chatId,
+              'user_id': userId,
+              'role': userId == currentUserId ? 'admin' : 'member',
+            },
+          )
           .toList();
 
+      debugPrint('ChatService: Adding ${participants.length} participants');
       await _supabase.client.from('chat_participants').insert(participants);
 
-      await loadChats();
-      debugPrint('ChatService: Created group chat: $chatId');
+      // Chat listesini güncelle (background'da)
+      loadChats();
+      debugPrint('ChatService: Group chat created successfully: $chatId');
       return chatId;
     } catch (e) {
       debugPrint('ChatService: Error creating group: $e');
@@ -361,15 +537,22 @@ class ChatService extends ChangeNotifier {
   /// Grup üyelerini getir
   Future<List<Map<String, dynamic>>> getGroupMembers(String chatId) async {
     try {
+      debugPrint('ChatService: Getting members for chat $chatId');
+
       final participants = await _supabase.client
           .from('chat_participants')
           .select('''
             user_id,
             role,
             joined_at,
-            profiles(id, username, full_name, avatar_url, is_online, last_seen)
+            profiles:user_id(id, username, full_name, avatar_url, is_online, last_seen)
           ''')
           .eq('chat_id', chatId);
+
+      debugPrint('ChatService: Found ${participants.length} members');
+      for (var p in participants) {
+        debugPrint('  - ${p['user_id']}: ${p['profiles']}');
+      }
 
       return List<Map<String, dynamic>>.from(participants);
     } catch (e) {
@@ -432,11 +615,13 @@ class ChatService extends ChangeNotifier {
       // Sadece yeni üyeleri ekle
       final newMembers = userIds
           .where((id) => !existingUserIds.contains(id))
-          .map((userId) => {
-                'chat_id': chatId,
-                'user_id': userId,
-                'role': 'member',
-              })
+          .map(
+            (userId) => {
+              'chat_id': chatId,
+              'user_id': userId,
+              'role': 'member',
+            },
+          )
           .toList();
 
       if (newMembers.isEmpty) {
@@ -447,7 +632,9 @@ class ChatService extends ChangeNotifier {
       await _supabase.client.from('chat_participants').insert(newMembers);
 
       await loadChats();
-      debugPrint('ChatService: Added ${newMembers.length} members to group $chatId');
+      debugPrint(
+        'ChatService: Added ${newMembers.length} members to group $chatId',
+      );
       return true;
     } catch (e) {
       debugPrint('ChatService: Error adding members: $e');
@@ -629,32 +816,105 @@ class ChatService extends ChangeNotifier {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /// Bir sohbetin mesajlarını getir
-  Future<List<Map<String, dynamic>>> loadMessages(String chatId, {int limit = 50}) async {
+  Future<List<Map<String, dynamic>>> loadMessages(
+    String chatId, {
+    int limit = 50,
+  }) async {
     if (currentUserId == null) return [];
 
     _isLoadingMessages = true;
     notifyListeners();
 
     try {
-      final messages = await _supabase.client
+      debugPrint('ChatService: Loading messages for $chatId...');
+      final messagesRaw = await _supabase.client
           .from('messages')
           .select('''
             *,
-            sender:profiles!sender_id(id, username, full_name, avatar_url)
+            sender:profiles!sender_id(id, username, full_name, avatar_url, mood_aura)
           ''')
           .eq('chat_id', chatId)
           .order('created_at', ascending: false)
           .limit(limit);
 
-      _messagesByChat[chatId] = List<Map<String, dynamic>>.from(messages);
-      debugPrint('ChatService: Loaded ${messages.length} messages for chat $chatId');
-      
+      debugPrint('ChatService: Raw messages count: ${messagesRaw.length}');
+
+      final List<Map<String, dynamic>> messages = (messagesRaw as List)
+          .map((m) => Map<String, dynamic>.from(m as Map))
+          .toList();
+      final List<String> messageIds = messages
+          .map((m) => m['id'] as String)
+          .toList();
+
+      if (messageIds.isNotEmpty) {
+        // 1. Reaksiyonları çek (İzole)
+        try {
+          debugPrint(
+            'ChatService: Fetching reactions for ${messageIds.length} messages...',
+          );
+          final reactionsRaw = await _supabase.client
+              .from('message_reactions')
+              .select('*')
+              .inFilter('message_id', messageIds);
+
+          final reactions = reactionsRaw as List;
+          debugPrint('ChatService: Found ${reactions.length} reactions');
+
+          for (var m in messages) {
+            final mid = m['id'];
+            m['message_reactions'] = reactions
+                .where((r) => r['message_id'] == mid)
+                .toList();
+          }
+        } catch (reE) {
+          debugPrint(
+            'ChatService: INFO - message_reactions table may be missing or inaccessible: $reE',
+          );
+          for (var m in messages) {
+            m['message_reactions'] ??= [];
+          }
+        }
+
+        // 2. Yıldızları çek (İzole)
+        try {
+          if (currentUserId != null) {
+            final starsRaw = await _supabase.client
+                .from('starred_messages')
+                .select('message_id')
+                .eq('user_id', currentUserId!)
+                .inFilter('message_id', messageIds);
+
+            final stars = starsRaw as List;
+            debugPrint('ChatService: Found ${stars.length} stars');
+
+            for (var m in messages) {
+              final mid = m['id'];
+              m['starred_messages'] = stars
+                  .where((s) => s['message_id'] == mid)
+                  .toList();
+            }
+          }
+        } catch (starE) {
+          debugPrint(
+            'ChatService: INFO - starred_messages table may be missing or inaccessible: $starE',
+          );
+          for (var m in messages) {
+            m['starred_messages'] ??= [];
+          }
+        }
+      }
+
+      _messagesByChat[chatId] = messages;
+      debugPrint(
+        'ChatService: Successfully loaded ${messages.length} messages for chat $chatId',
+      );
+
       _isLoadingMessages = false;
       notifyListeners();
-      
+
       return _messagesByChat[chatId]!;
     } catch (e) {
-      debugPrint('ChatService: Error loading messages: $e');
+      debugPrint('ChatService: Critical error in loadMessages: $e');
       _isLoadingMessages = false;
       notifyListeners();
       return [];
@@ -678,18 +938,22 @@ class ChatService extends ChangeNotifier {
     if (currentUserId == null) return false;
 
     try {
-      final response = await _supabase.client.from('messages').insert({
-        'chat_id': chatId,
-        'sender_id': currentUserId,
-        'content': content,
-        'type': type,
-        'media_url': mediaUrl,
-        'metadata': metadata,
-        'reply_to': replyToId,
-      }).select('id').single();
+      final response = await _supabase.client
+          .from('messages')
+          .insert({
+            'chat_id': chatId,
+            'sender_id': currentUserId,
+            'content': content,
+            'type': type,
+            'media_url': mediaUrl,
+            'metadata': metadata,
+            'reply_to': replyToId,
+          })
+          .select('id')
+          .single();
 
       final messageId = response['id'] as String;
-      
+
       // Mesajı "sent" olarak işaretle (gönderen için)
       await _markMessageAsSent(messageId);
 
@@ -705,18 +969,25 @@ class ChatService extends ChangeNotifier {
   }
 
   /// Chat'in son mesaj bilgisini güncelle
-  Future<void> _updateChatLastMessage(String chatId, String content, String type) async {
+  Future<void> _updateChatLastMessage(
+    String chatId,
+    String content,
+    String type,
+  ) async {
     try {
       // Mesaj tipine göre görüntülenecek metni formatla
       final displayMessage = _formatLastMessageByType(content, type);
-      
-      await _supabase.client.from('chats').update({
-        'last_message': displayMessage,
-        'last_message_at': DateTime.now().toIso8601String(),
-      }).eq('id', chatId);
-      
-      // Chat listesini güncelle
-      await loadChats();
+
+      await _supabase.client
+          .from('chats')
+          .update({
+            'last_message': displayMessage,
+            'last_message_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', chatId);
+
+      // Chat listesini background'da güncelle (delay önlemek için await yok)
+      loadChats();
     } catch (e) {
       debugPrint('ChatService: Error updating chat last message: $e');
     }
@@ -813,22 +1084,32 @@ class ChatService extends ChangeNotifier {
         });
         debugPrint('ChatService: Reaction $emoji added to $messageId');
       }
-      
+
       return true;
     } catch (e) {
-      debugPrint('ChatService: Error adding reaction: $e');
+      if (e is PostgrestException) {
+        debugPrint(
+          'ChatService: PostgrestError adding reaction: ${e.message} (Code: ${e.code}, Details: ${e.details}, Hint: ${e.hint})',
+        );
+      } else {
+        debugPrint('ChatService: Unexpected error adding reaction: $e');
+      }
       return false;
     }
   }
 
   /// Mesajın tepkilerini getir
-  Future<List<Map<String, dynamic>>> getMessageReactions(String messageId) async {
+  Future<List<Map<String, dynamic>>> getMessageReactions(
+    String messageId,
+  ) async {
     try {
       final reactions = await _supabase.client
           .from('message_reactions')
-          .select('*, user:profiles!user_id(id, username, full_name, avatar_url)')
+          .select(
+            '*, user:profiles!user_id(id, username, full_name, avatar_url)',
+          )
           .eq('message_id', messageId);
-      
+
       return List<Map<String, dynamic>>.from(reactions);
     } catch (e) {
       debugPrint('ChatService: Error getting reactions: $e');
@@ -891,7 +1172,25 @@ class ChatService extends ChangeNotifier {
         });
         debugPrint('ChatService: Star added to $messageId');
       }
-      
+      // Cache'i güncelle
+      for (final chatId in _messagesByChat.keys) {
+        final messages = _messagesByChat[chatId];
+        if (messages != null) {
+          final idx = messages.indexWhere((m) => m['id'] == messageId);
+          if (idx != -1) {
+            final isCurrentlyStarred = existing != null;
+            // Eklendiyse artık yıldızlı, silindiyse değil
+            messages[idx]['starred_messages'] = isCurrentlyStarred
+                ? []
+                : [
+                    {'id': 'temp'},
+                  ];
+            notifyListeners();
+            break;
+          }
+        }
+      }
+
       return true;
     } catch (e) {
       debugPrint('ChatService: Error toggling star: $e');
@@ -956,24 +1255,139 @@ class ChatService extends ChangeNotifier {
   void _subscribeToChats() {
     if (currentUserId == null) return;
 
+    // Listen to chats table changes
     _chatsChannel = _supabase.client
-        .channel('chats_${currentUserId}')
+        .channel('chats_$currentUserId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'chats',
           callback: (payload) {
             debugPrint('ChatService: Chat change: ${payload.eventType}');
-            loadChats(); // Refresh chat list
+            loadChats();
           },
         )
         .subscribe();
 
-    debugPrint('ChatService: Subscribed to chats');
+    // Listen to chat_participants table changes (for unread counts and last_read_at)
+    // Temporarily disabled - channel subscription
+    /*
+    _participantsChannel = _supabase.client
+        .channel('participants_${currentUserId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_participants',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: currentUserId,
+          ),
+          callback: (payload) {
+            debugPrint(
+              'ChatService: Participation change: ${payload.eventType}',
+            );
+            loadChats();
+          },
+        )
+        .subscribe();
+    */
+
+    debugPrint('ChatService: Subscribed to chats and participations');
+  }
+
+  /// Tüm mesajları global olarak dinle (unread count için)
+  void _subscribeToGlobalMessages() {
+    if (currentUserId == null) return;
+
+    _globalMessagesChannel = _supabase.client
+        .channel('global_messages_$currentUserId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) async {
+            final newMessage = payload.newRecord;
+            final chatId = newMessage['chat_id'] as String?;
+            final senderId = newMessage['sender_id'] as String?;
+            final content = newMessage['content'] as String?;
+            final type = newMessage['type'] as String? ?? 'text';
+            final createdAt = newMessage['created_at'] as String?;
+
+            // Başkasından gelen mesaj
+            if (chatId != null &&
+                senderId != null &&
+                senderId != currentUserId) {
+              debugPrint(
+                'ChatService: New message from $senderId in chat $chatId',
+              );
+
+              // Unread count'u artır
+              _unreadCounts[chatId] = (_unreadCounts[chatId] ?? 0) + 1;
+
+              // Chat listesindeki ilgili chat'i bul ve güncelle
+              final chatIndex = _chats.indexWhere((c) => c['id'] == chatId);
+              if (chatIndex != -1) {
+                // Last message'ı formatla
+                final formattedMessage = _formatLastMessageByType(
+                  content ?? '',
+                  type,
+                );
+
+                // Chat'i güncelle
+                _chats[chatIndex] = {
+                  ..._chats[chatIndex],
+                  'last_message': formattedMessage,
+                  'last_message_at': createdAt,
+                  'unread_count': _unreadCounts[chatId],
+                };
+
+                // Chat'i listenin başına taşı (en son mesaj)
+                final updatedChat = _chats.removeAt(chatIndex);
+                _chats.insert(0, updatedChat);
+              } else {
+                // Chat listede yoksa, yeniden yükle
+                await loadChats();
+              }
+
+              // UI'ı güncelle
+              notifyListeners();
+            }
+          },
+        )
+        .subscribe();
+
+    debugPrint('ChatService: Subscribed to global messages');
+  }
+
+  /// Message status değişikliklerini dinle
+  void _subscribeToMessageStatus() {
+    if (currentUserId == null) return;
+
+    _messageStatusChannel = _supabase.client
+        .channel('message_status_$currentUserId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'message_status',
+          callback: (payload) {
+            debugPrint(
+              'ChatService: Message status change: ${payload.eventType}',
+            );
+            // Status değişikliği olduğunda notify et
+            notifyListeners();
+          },
+        )
+        .subscribe();
+
+    debugPrint('ChatService: Subscribed to message status');
   }
 
   /// Belirli bir sohbetin mesajlarını dinle
-  RealtimeChannel subscribeToMessages(String chatId, Function(Map<String, dynamic>) onMessage) {
+  RealtimeChannel subscribeToMessages(
+    String chatId,
+    Function(Map<String, dynamic>) onMessage,
+  ) {
     final channel = _supabase.client
         .channel('messages_$chatId')
         .onPostgresChanges(
@@ -988,11 +1402,11 @@ class ChatService extends ChangeNotifier {
           callback: (payload) {
             debugPrint('ChatService: New message in chat $chatId');
             final newMessage = payload.newRecord;
-            
+
             // Cache'e ekle
             _messagesByChat[chatId] ??= [];
             _messagesByChat[chatId]!.insert(0, newMessage);
-            
+
             onMessage(newMessage);
             notifyListeners();
           },
@@ -1009,7 +1423,7 @@ class ChatService extends ChangeNotifier {
   /// Sohbetteki karşı tarafın bilgisini al (birebir sohbet için)
   Map<String, dynamic>? getOtherUser(Map<String, dynamic> chat) {
     if (currentUserId == null) return null;
-    
+
     final participants = chat['chat_participants'] as List?;
     if (participants == null) return null;
 
@@ -1027,7 +1441,7 @@ class ChatService extends ChangeNotifier {
     if (chat['is_group'] == true) {
       return chat['name'] ?? 'Grup';
     }
-    
+
     final otherUser = getOtherUser(chat);
     return otherUser?['full_name'] ?? otherUser?['username'] ?? 'Bilinmeyen';
   }
@@ -1037,17 +1451,215 @@ class ChatService extends ChangeNotifier {
     if (chat['is_group'] == true) {
       return chat['avatar_url'];
     }
-    
+
     final otherUser = getOtherUser(chat);
     return otherUser?['avatar_url'];
   }
 
   /// Karşı taraf online mı
+  /// is_online true VE last_seen 3 dakikadan yeniyse online say
   bool isOtherUserOnline(Map<String, dynamic> chat) {
     if (chat['is_group'] == true) return false;
-    
+
     final otherUser = getOtherUser(chat);
-    return otherUser?['is_online'] ?? false;
+    if (otherUser == null) return false;
+
+    // Önce is_online değerini kontrol et
+    final isOnlineFlag = otherUser['is_online'] as bool? ?? false;
+    if (!isOnlineFlag) {
+      return false; // Kullanıcı kendini offline olarak işaretlemiş
+    }
+
+    final lastSeenStr = otherUser['last_seen'] as String?;
+    if (lastSeenStr == null) return false;
+
+    try {
+      final lastSeen = DateTime.parse(lastSeenStr);
+      final now = DateTime.now().toUtc();
+
+      // is_online true olsa bile, son görülme 3 dakikadan eskiyse offline kabul et
+      // (Heartbeat mekanizması çalışmıyor olabilir)
+      final diff = now.difference(lastSeen).inMinutes.abs();
+      return diff <= 3;
+    } catch (e) {
+      return isOnlineFlag; // Tarih parse edilemiyorsa flag'e güven
+    }
+  }
+
+  Future<void> fetchUserOnlineStatus(String userId) async {
+    try {
+      final response = await _supabase.client
+          .from('profiles')
+          .select('is_online, last_seen')
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (response == null) return;
+
+      final isOnline = response['is_online'] as bool? ?? false;
+      final lastSeenStr = response['last_seen'] as String?;
+      final lastSeen = lastSeenStr != null
+          ? DateTime.tryParse(lastSeenStr)
+          : null;
+
+      // Update store
+      ChatStore.instance.updatePresence(
+        userId,
+        online: isOnline,
+        lastSeenAt: lastSeen,
+      );
+    } catch (e) {
+      debugPrint('ChatService: Error fetching online status: $e');
+    }
+  }
+
+  StreamSubscription<List<Map<String, dynamic>>> subscribeToPresence(
+    String userId,
+  ) {
+    // Initial fetch
+    fetchUserOnlineStatus(userId);
+
+    // Realtime subscription to profiles table
+    return _supabase.client
+        .from('profiles')
+        .stream(primaryKey: ['id'])
+        .eq('id', userId)
+        .listen((List<Map<String, dynamic>> data) {
+          if (data.isNotEmpty) {
+            final profile = data.first;
+            final isOnline = profile['is_online'] as bool? ?? false;
+            final lastSeenStr = profile['last_seen'] as String?;
+            final lastSeen = lastSeenStr != null
+                ? DateTime.tryParse(lastSeenStr)
+                : null;
+
+            ChatStore.instance.updatePresence(
+              userId,
+              online: isOnline,
+              lastSeenAt: lastSeen,
+            );
+          }
+        });
+  }
+
+  /// Karşı tarafın son görülme bilgisini görebilir miyim (gizlilik kontrolü ile)
+  Future<bool> canSeeLastSeen(String otherUserId) async {
+    try {
+      // Önce kendi ayarımı kontrol et
+      final myProfile = await _supabase.client
+          .from('profiles')
+          .select('privacy_last_seen')
+          .eq('id', currentUserId!)
+          .maybeSingle();
+
+      // Kendi ayarım "nobody" ise başkalarınınkini göremem
+      if (myProfile?['privacy_last_seen'] == 'nobody') {
+        return false;
+      }
+
+      // Karşı tarafın gizlilik ayarını kontrol et
+      final otherProfile = await _supabase.client
+          .from('profiles')
+          .select('privacy_last_seen')
+          .eq('id', otherUserId)
+          .maybeSingle();
+
+      if (otherProfile == null) return true;
+
+      final privacy = otherProfile['privacy_last_seen'] ?? 'everyone';
+
+      switch (privacy) {
+        case 'everyone':
+          return true;
+        case 'contacts':
+          // Karşı taraf beni kişi olarak eklemiş mi?
+          final isInContacts = await _supabase.client
+              .from('contacts')
+              .select('id')
+              .eq('user_id', otherUserId)
+              .eq('contact_id', currentUserId!)
+              .eq('is_blocked', false)
+              .maybeSingle();
+          return isInContacts != null;
+        case 'nobody':
+          return false;
+        default:
+          return true;
+      }
+    } catch (e) {
+      debugPrint('ChatService: Error checking last seen visibility: $e');
+      return true;
+    }
+  }
+
+  /// Karşı tarafın profil fotoğrafını görebilir miyim
+  Future<bool> canSeeProfilePhoto(String otherUserId) async {
+    return _canSeePrivateInfo(otherUserId, 'privacy_profile_photo');
+  }
+
+  /// Karşı tarafın okundu bilgisini görebilir miyim (her iki tarafın ayarına bağlı)
+  Future<bool> canSeeReadReceipts(String otherUserId) async {
+    try {
+      // Önce kendi ayarımı kontrol et
+      final myProfile = await _supabase.client
+          .from('profiles')
+          .select('privacy_read_receipts')
+          .eq('id', currentUserId!)
+          .maybeSingle();
+
+      // Kendi okundu bilgim kapalıysa karşıdakini göremem
+      if (myProfile?['privacy_read_receipts'] == false) {
+        return false;
+      }
+
+      // Karşı tarafın ayarını kontrol et
+      final otherProfile = await _supabase.client
+          .from('profiles')
+          .select('privacy_read_receipts')
+          .eq('id', otherUserId)
+          .maybeSingle();
+
+      // Karşı tarafın okundu bilgisi kapalıysa bana da gösterme
+      return otherProfile?['privacy_read_receipts'] ?? true;
+    } catch (e) {
+      debugPrint('ChatService: Error checking read receipts: $e');
+      return true;
+    }
+  }
+
+  Future<bool> _canSeePrivateInfo(String userId, String privacyKey) async {
+    try {
+      final result = await _supabase.client
+          .from('profiles')
+          .select(privacyKey)
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (result == null) return true;
+
+      final privacy = result[privacyKey] ?? 'everyone';
+
+      switch (privacy) {
+        case 'everyone':
+          return true;
+        case 'contacts':
+          final isInContacts = await _supabase.client
+              .from('contacts')
+              .select('id')
+              .eq('user_id', userId)
+              .eq('contact_id', currentUserId!)
+              .eq('is_blocked', false)
+              .maybeSingle();
+          return isInContacts != null;
+        case 'nobody':
+          return false;
+        default:
+          return true;
+      }
+    } catch (e) {
+      debugPrint('ChatService: Error checking $privacyKey visibility: $e');
+      return true;
+    }
   }
 
   /// Son mesaj zamanını formatla
@@ -1055,17 +1667,18 @@ class ChatService extends ChangeNotifier {
     final lastMessageAt = chat['last_message_at'];
     if (lastMessageAt == null) return '';
 
-    final dateTime = DateTime.parse(lastMessageAt);
+    final dateTime = DateTime.parse(lastMessageAt).toLocal();
     final now = DateTime.now();
     final diff = now.difference(dateTime);
 
-    if (diff.inMinutes < 1) {
+    if (diff.inMinutes < 2) {
       return 'Şimdi';
-    } else if (diff.inHours < 1) {
-      return '${diff.inMinutes} dk';
-    } else if (diff.inDays < 1) {
+    } else if (now.year == dateTime.year &&
+        now.month == dateTime.month &&
+        now.day == dateTime.day) {
       return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
-    } else if (diff.inDays == 1) {
+    } else if (now.difference(dateTime).inDays == 1 ||
+        (now.day - dateTime.day == 1 && now.month == dateTime.month)) {
       return 'Dün';
     } else if (diff.inDays < 7) {
       const days = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
@@ -1078,7 +1691,7 @@ class ChatService extends ChangeNotifier {
   /// İki kullanıcı arasındaki ortak grupları getir
   Future<List<Map<String, dynamic>>> getCommonGroups(String otherUserId) async {
     if (currentUserId == null) return [];
-    
+
     try {
       // Mevcut kullanıcının grup katılımları
       final myGroups = await _supabase.client
@@ -1086,9 +1699,11 @@ class ChatService extends ChangeNotifier {
           .select('chat_id')
           .eq('user_id', currentUserId!)
           .then((result) async {
-            final chatIds = (result as List).map((r) => r['chat_id'] as String).toList();
+            final chatIds = (result as List)
+                .map((r) => r['chat_id'] as String)
+                .toList();
             if (chatIds.isEmpty) return [];
-            
+
             // Sadece grupları filtrele
             final groups = await _supabase.client
                 .from('chats')
@@ -1097,24 +1712,24 @@ class ChatService extends ChangeNotifier {
                 .eq('is_group', true);
             return List<Map<String, dynamic>>.from(groups);
           });
-      
+
       if (myGroups.isEmpty) return [];
-      
+
       // Diğer kullanıcının da katıldığı grupları bul
       final otherUserParticipations = await _supabase.client
           .from('chat_participants')
           .select('chat_id')
           .eq('user_id', otherUserId);
-      
+
       final otherUserGroupIds = (otherUserParticipations as List)
           .map((r) => r['chat_id'] as String)
           .toSet();
-      
+
       // Ortak grupları filtrele
       final commonGroups = myGroups
           .where((g) => otherUserGroupIds.contains(g['id']))
           .toList();
-      
+
       // Her grup için üye sayısını al
       for (final group in commonGroups) {
         final memberCount = await _supabase.client
@@ -1123,7 +1738,7 @@ class ChatService extends ChangeNotifier {
             .eq('chat_id', group['id']);
         group['member_count'] = (memberCount as List).length;
       }
-      
+
       debugPrint('ChatService: Found ${commonGroups.length} common groups');
       return List<Map<String, dynamic>>.from(commonGroups);
     } catch (e) {
@@ -1136,17 +1751,23 @@ class ChatService extends ChangeNotifier {
   // PRESENCE (ONLINE STATUS)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Online durumunu güncelle
+  /// Online durumunu güncelle - UTC zamanını kullan
   Future<void> setOnlineStatus(bool isOnline) async {
     if (currentUserId == null) return;
 
     try {
+      // last_seen sadece ONLINE olurken güncellenmeli
+      // Offline olurken last_seen sabit kalmalı (en son ne zaman aktifti)
+      final updateData = <String, dynamic>{'is_online': isOnline};
+
+      // Sadece online olurken last_seen'i güncelle
+      if (isOnline) {
+        updateData['last_seen'] = DateTime.now().toUtc().toIso8601String();
+      }
+
       await _supabase.client
           .from('profiles')
-          .update({
-            'is_online': isOnline,
-            'last_seen': DateTime.now().toIso8601String(),
-          })
+          .update(updateData)
           .eq('id', currentUserId!);
 
       debugPrint('ChatService: Online status set to $isOnline');
@@ -1173,39 +1794,53 @@ class ChatService extends ChangeNotifier {
 
   /// Son görülme zamanını formatla
   String formatLastSeen(DateTime? lastSeen) {
-    if (lastSeen == null) return 'uzun süre önce';
+    if (lastSeen == null) return ''; // Loading or unknown state
 
+    final localLastSeen = lastSeen.toLocal();
     final now = DateTime.now();
-    final diff = now.difference(lastSeen);
+    final diff = now.difference(localLastSeen);
 
-    if (diff.inMinutes < 1) {
+    if (diff.inMinutes < 3) {
       return 'şimdi aktif';
-    } else if (diff.inMinutes < 60) {
-      return '${diff.inMinutes} dakika önce';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours} saat önce';
-    } else if (diff.inDays == 1) {
-      return 'dün görüldü';
+    }
+
+    final hh = localLastSeen.hour.toString().padLeft(2, '0');
+    final mm = localLastSeen.minute.toString().padLeft(2, '0');
+
+    if (now.year == localLastSeen.year &&
+        now.month == localLastSeen.month &&
+        now.day == localLastSeen.day) {
+      return 'bugün saat $hh:$mm';
+    } else if (now.difference(localLastSeen).inDays == 1 ||
+        (now.day - localLastSeen.day == 1 &&
+            now.month == localLastSeen.month)) {
+      return 'dün saat $hh:$mm';
     } else if (diff.inDays < 7) {
-      return '${diff.inDays} gün önce';
+      final days = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+      return '${days[localLastSeen.weekday - 1]} saat $hh:$mm';
     } else {
-      return '${lastSeen.day}.${lastSeen.month}.${lastSeen.year}';
+      return '${localLastSeen.day}.${localLastSeen.month}.${localLastSeen.year}';
     }
   }
 
   /// Karşı tarafın son görülme zamanını al
+  /// is_online true olsa bile last_seen 3 dakikadan eskiyse offline kabul et
   String getOtherUserLastSeen(Map<String, dynamic> chat) {
     final otherUser = getOtherUser(chat);
     if (otherUser == null) return '';
 
-    final isOnline = otherUser['is_online'] ?? false;
+    final isOnline = isOtherUserOnline(chat);
     if (isOnline) return 'çevrimiçi';
 
-    final lastSeenStr = otherUser['last_seen'];
+    final lastSeenStr = otherUser['last_seen'] as String?;
     if (lastSeenStr == null) return 'uzun süre önce';
 
-    final lastSeen = DateTime.tryParse(lastSeenStr);
-    return 'son görülme ${formatLastSeen(lastSeen)}';
+    try {
+      final lastSeen = DateTime.parse(lastSeenStr);
+      return 'son görülme ${formatLastSeen(lastSeen)}';
+    } catch (e) {
+      return 'uzun süre önce';
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1257,7 +1892,9 @@ class ChatService extends ChangeNotifier {
         });
       }
 
-      debugPrint('ChatService: Message forwarded to ${targetChatIds.length} chats');
+      debugPrint(
+        'ChatService: Message forwarded to ${targetChatIds.length} chats',
+      );
       return true;
     } catch (e) {
       debugPrint('ChatService: Error forwarding message: $e');
@@ -1305,8 +1942,10 @@ class ChatService extends ChangeNotifier {
           .from('media')
           .uploadBinary(storagePath, fileBytes);
 
-      final publicUrl = _supabase.client.storage.from('media').getPublicUrl(storagePath);
-      
+      final publicUrl = _supabase.client.storage
+          .from('media')
+          .getPublicUrl(storagePath);
+
       debugPrint('ChatService: Photo uploaded, URL: $publicUrl');
 
       // Mesaj olarak gönder
@@ -1340,7 +1979,9 @@ class ChatService extends ChangeNotifier {
           .from('media')
           .uploadBinary(storagePath, audioBytes);
 
-      final publicUrl = _supabase.client.storage.from('media').getPublicUrl(storagePath);
+      final publicUrl = _supabase.client.storage
+          .from('media')
+          .getPublicUrl(storagePath);
 
       return sendMessage(
         chatId: chatId,
@@ -1372,17 +2013,16 @@ class ChatService extends ChangeNotifier {
           .from('media')
           .uploadBinary(storagePath, fileBytes);
 
-      final publicUrl = _supabase.client.storage.from('media').getPublicUrl(storagePath);
+      final publicUrl = _supabase.client.storage
+          .from('media')
+          .getPublicUrl(storagePath);
 
       return sendMessage(
         chatId: chatId,
         content: fileName,
         type: 'file',
         mediaUrl: publicUrl,
-        metadata: {
-          'file_name': fileName,
-          'file_size': fileSize,
-        },
+        metadata: {'file_name': fileName, 'file_size': fileSize},
       );
     } catch (e) {
       debugPrint('ChatService: Error sending file: $e');
@@ -1410,7 +2050,9 @@ class ChatService extends ChangeNotifier {
           .from('media')
           .uploadBinary(storagePath, videoBytes);
 
-      final publicUrl = _supabase.client.storage.from('media').getPublicUrl(storagePath);
+      final publicUrl = _supabase.client.storage
+          .from('media')
+          .getPublicUrl(storagePath);
 
       // Thumbnail varsa yükle
       String? thumbnailUrl;
@@ -1419,7 +2061,9 @@ class ChatService extends ChangeNotifier {
         await _supabase.client.storage
             .from('media')
             .uploadBinary(thumbPath, thumbnailBytes);
-        thumbnailUrl = _supabase.client.storage.from('media').getPublicUrl(thumbPath);
+        thumbnailUrl = _supabase.client.storage
+            .from('media')
+            .getPublicUrl(thumbPath);
       }
 
       return sendMessage(
@@ -1441,10 +2085,7 @@ class ChatService extends ChangeNotifier {
   }
 
   /// GIF gönder
-  Future<bool> sendGif({
-    required String chatId,
-    required String gifUrl,
-  }) async {
+  Future<bool> sendGif({required String chatId, required String gifUrl}) async {
     return sendMessage(
       chatId: chatId,
       content: '',
@@ -1496,7 +2137,10 @@ class ChatService extends ChangeNotifier {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /// Sohbet içinde mesaj ara
-  Future<List<Map<String, dynamic>>> searchMessagesInChat(String chatId, String query) async {
+  Future<List<Map<String, dynamic>>> searchMessagesInChat(
+    String chatId,
+    String query,
+  ) async {
     if (query.trim().isEmpty) return [];
 
     try {
@@ -1508,7 +2152,9 @@ class ChatService extends ChangeNotifier {
           .order('created_at', ascending: false)
           .limit(50);
 
-      debugPrint('ChatService: Found ${results.length} messages for "$query" in chat $chatId');
+      debugPrint(
+        'ChatService: Found ${results.length} messages for "$query" in chat $chatId',
+      );
       return List<Map<String, dynamic>>.from(results);
     } catch (e) {
       debugPrint('ChatService: Error searching messages: $e');
@@ -1517,7 +2163,9 @@ class ChatService extends ChangeNotifier {
   }
 
   /// Sohbetteki medya mesajlarını getir (fotoğraf, video, dosya)
-  Future<Map<String, List<Map<String, dynamic>>>> getChatMedia(String chatId) async {
+  Future<Map<String, List<Map<String, dynamic>>>> getChatMedia(
+    String chatId,
+  ) async {
     try {
       final results = await _supabase.client
           .from('messages')
@@ -1527,15 +2175,17 @@ class ChatService extends ChangeNotifier {
           .order('created_at', ascending: false);
 
       final messages = List<Map<String, dynamic>>.from(results);
-      
+
       // Tipe göre grupla
       final photos = messages.where((m) => m['type'] == 'image').toList();
       final videos = messages.where((m) => m['type'] == 'video').toList();
       final files = messages.where((m) => m['type'] == 'file').toList();
       final voices = messages.where((m) => m['type'] == 'voice').toList();
-      
-      debugPrint('ChatService: Found ${photos.length} photos, ${videos.length} videos, ${files.length} files');
-      
+
+      debugPrint(
+        'ChatService: Found ${photos.length} photos, ${videos.length} videos, ${files.length} files',
+      );
+
       return {
         'photos': photos,
         'videos': videos,
@@ -1574,7 +2224,9 @@ class ChatService extends ChangeNotifier {
           .order('created_at', ascending: false)
           .limit(100);
 
-      debugPrint('ChatService: Found ${results.length} messages for "$query" globally');
+      debugPrint(
+        'ChatService: Found ${results.length} messages for "$query" globally',
+      );
       return List<Map<String, dynamic>>.from(results);
     } catch (e) {
       debugPrint('ChatService: Error searching all messages: $e');
@@ -1660,11 +2312,8 @@ class ChatService extends ChangeNotifier {
 
   /// Sohbet sessize alınmış mı kontrol et
   bool isChatMuted(String chatId) {
-    final chat = _chats.firstWhere(
-      (c) => c['id'] == chatId,
-      orElse: () => {},
-    );
-    
+    final chat = _chats.firstWhere((c) => c['id'] == chatId, orElse: () => {});
+
     final participants = chat['chat_participants'] as List?;
     if (participants == null) return false;
 
@@ -1709,7 +2358,7 @@ class ChatService extends ChangeNotifier {
           .select('delivered_at, read_at')
           .eq('message_id', messageId)
           .maybeSingle();
-      
+
       return result;
     } catch (e) {
       debugPrint('ChatService: Error getting message status: $e');
@@ -1738,13 +2387,27 @@ class ChatService extends ChangeNotifier {
     if (currentUserId == null) return;
 
     try {
+      // Gizlilik kontrolü: read receipts kapalıysa read_at güncelleme (cache kullan)
+      if (_readReceiptsEnabled == null) {
+        final myProfile = await _supabase.client
+            .from('profiles')
+            .select('privacy_read_receipts')
+            .eq('id', currentUserId!)
+            .maybeSingle();
+        _readReceiptsEnabled = myProfile?['privacy_read_receipts'] ?? true;
+      }
+
       await _supabase.client.from('message_status').upsert({
         'message_id': messageId,
         'user_id': currentUserId,
-        'read_at': DateTime.now().toIso8601String(),
+        'read_at': _readReceiptsEnabled!
+            ? DateTime.now().toIso8601String()
+            : null,
         'delivered_at': DateTime.now().toIso8601String(),
       }, onConflict: 'message_id,user_id');
-      debugPrint('ChatService: Message $messageId marked as read');
+      debugPrint(
+        'ChatService: Message $messageId marked as ${_readReceiptsEnabled! ? "read" : "delivered only"}',
+      );
     } catch (e) {
       debugPrint('ChatService: Error marking message as read: $e');
     }
@@ -1755,16 +2418,86 @@ class ChatService extends ChangeNotifier {
     if (currentUserId == null) return;
 
     try {
+      final now = DateTime.now().toIso8601String();
+
       // Son okuma zamanını güncelle
       await _supabase.client
           .from('chat_participants')
-          .update({'last_read_at': DateTime.now().toIso8601String()})
+          .update({'last_read_at': now})
           .eq('chat_id', chatId)
           .eq('user_id', currentUserId!);
 
+      // Unread count'u sıfırla
+      _unreadCounts[chatId] = 0;
+
+      // Yüklü chat'lerdeki sayıyı da güncelle
+      for (var i = 0; i < _chats.length; i++) {
+        if (_chats[i]['id'] == chatId) {
+          _chats[i] = {..._chats[i], 'unread_count': 0};
+          break;
+        }
+      }
+
+      notifyListeners();
       debugPrint('ChatService: Marked chat $chatId as read');
+
+      // Arka planda mesaj durumlarını güncelle (performans için)
+      _updateMessageStatusesInBackground(chatId, now);
     } catch (e) {
       debugPrint('ChatService: Error marking chat as read: $e');
+    }
+  }
+
+  /// Mesaj durumlarını arka planda güncelle
+  Future<void> _updateMessageStatusesInBackground(
+    String chatId,
+    String timestamp,
+  ) async {
+    try {
+      // Gizlilik kontrolü: read receipts kapalıysa read_at güncelleme (cache kullan)
+      if (_readReceiptsEnabled == null) {
+        final myProfile = await _supabase.client
+            .from('profiles')
+            .select('privacy_read_receipts')
+            .eq('id', currentUserId!)
+            .maybeSingle();
+        _readReceiptsEnabled = myProfile?['privacy_read_receipts'] ?? true;
+      }
+
+      // Tüm okunmamış mesajları güncelle (limit kaldırıldı)
+      final messages = await _supabase.client
+          .from('messages')
+          .select('id')
+          .eq('chat_id', chatId)
+          .neq('sender_id', currentUserId!)
+          .order('created_at', ascending: false);
+
+      // Batch işlem için Future.wait kullan
+      final futures = <Future>[];
+      for (final msg in messages) {
+        final messageId = msg['id'] as String;
+        futures.add(
+          _supabase.client
+              .from('message_status')
+              .upsert({
+                'message_id': messageId,
+                'user_id': currentUserId,
+                'delivered_at': timestamp,
+                'read_at': _readReceiptsEnabled! ? timestamp : null,
+              }, onConflict: 'message_id,user_id')
+              .catchError((e) {
+                // Hataları yut
+                return null;
+              }),
+        );
+      }
+
+      await Future.wait(futures);
+      debugPrint(
+        'ChatService: Updated ${messages.length} message statuses (read receipts: $_readReceiptsEnabled)',
+      );
+    } catch (e) {
+      debugPrint('ChatService: Error updating message statuses: $e');
     }
   }
 
@@ -1796,7 +2529,18 @@ class ChatService extends ChangeNotifier {
     }
   }
 
-  /// Okunmamış mesaj sayısını al
+  /// Cache'den okunmamış mesaj sayısını al (hızlı)
+  int getCachedUnreadCount(String chatId) {
+    return _unreadCounts[chatId] ?? 0;
+  }
+
+  /// Unread count'u sıfırla (chat açıldığında)
+  void clearUnreadCount(String chatId) {
+    _unreadCounts[chatId] = 0;
+    notifyListeners();
+  }
+
+  /// Okunmamış mesaj sayısını al (Supabase'den)
   Future<int> getUnreadCount(String chatId) async {
     if (currentUserId == null) return 0;
 
@@ -1811,28 +2555,32 @@ class ChatService extends ChangeNotifier {
 
       final lastReadAt = participant['last_read_at'];
 
+      int count = 0;
       if (lastReadAt == null) {
         // Hiç okumamış, tüm mesajları say
-        final count = await _supabase.client
+        final result = await _supabase.client
             .from('messages')
             .select('id')
             .eq('chat_id', chatId)
             .neq('sender_id', currentUserId!);
-        return count.length;
+        count = result.length;
+      } else {
+        // Son okumadan sonraki mesajları say
+        final result = await _supabase.client
+            .from('messages')
+            .select('id')
+            .eq('chat_id', chatId)
+            .neq('sender_id', currentUserId!)
+            .gt('created_at', lastReadAt);
+        count = result.length;
       }
 
-      // Son okumadan sonraki mesajları say
-      final count = await _supabase.client
-          .from('messages')
-          .select('id')
-          .eq('chat_id', chatId)
-          .neq('sender_id', currentUserId!)
-          .gt('created_at', lastReadAt);
-
-      return count.length;
+      // Cache'i güncelle
+      _unreadCounts[chatId] = count;
+      return count;
     } catch (e) {
       debugPrint('ChatService: Error getting unread count: $e');
-      return 0;
+      return _unreadCounts[chatId] ?? 0;
     }
   }
 
@@ -1848,21 +2596,26 @@ class ChatService extends ChangeNotifier {
     if (currentUserId == null) return;
 
     try {
-      await _supabase.client.channel('typing_$chatId').sendBroadcastMessage(
-        event: 'typing',
-        payload: {
-          'user_id': currentUserId,
-          'chat_id': chatId,
-          'timestamp': DateTime.now().toIso8601String(),
-        },
-      );
+      await _supabase.client
+          .channel('typing_$chatId')
+          .sendBroadcastMessage(
+            event: 'typing',
+            payload: {
+              'user_id': currentUserId,
+              'chat_id': chatId,
+              'timestamp': DateTime.now().toIso8601String(),
+            },
+          );
     } catch (e) {
       debugPrint('ChatService: Error sending typing indicator: $e');
     }
   }
 
   /// Yazıyor durumunu dinle
-  RealtimeChannel subscribeToTyping(String chatId, Function(String userId) onTyping) {
+  RealtimeChannel subscribeToTyping(
+    String chatId,
+    Function(String userId) onTyping,
+  ) {
     final channel = _supabase.client
         .channel('typing_$chatId')
         .onBroadcast(
@@ -1920,18 +2673,23 @@ class ChatService extends ChangeNotifier {
 
   /// Metindeki @mention'ları parse et
   /// Returns: List of {userId, username, startIndex, endIndex}
-  static List<Map<String, dynamic>> parseMentions(String text, List<Map<String, dynamic>> chatMembers) {
+  static List<Map<String, dynamic>> parseMentions(
+    String text,
+    List<Map<String, dynamic>> chatMembers,
+  ) {
     final mentions = <Map<String, dynamic>>[];
     final mentionPattern = RegExp(r'@(\w+)');
-    
+
     for (final match in mentionPattern.allMatches(text)) {
       final username = match.group(1)?.toLowerCase() ?? '';
-      
+
       // Chat üyeleri arasında bu username'i bul
       for (final member in chatMembers) {
         final profile = member['profiles'] as Map<String, dynamic>?;
-        final memberUsername = (profile?['username'] ?? '').toString().toLowerCase();
-        
+        final memberUsername = (profile?['username'] ?? '')
+            .toString()
+            .toLowerCase();
+
         if (memberUsername == username) {
           mentions.add({
             'user_id': profile?['id'] ?? member['user_id'],
@@ -1943,20 +2701,22 @@ class ChatService extends ChangeNotifier {
         }
       }
     }
-    
+
     return mentions;
   }
 
   /// Mesaj gönderirken mention metadata'sı oluştur
-  static Map<String, dynamic>? createMentionMetadata(String text, List<Map<String, dynamic>> chatMembers) {
+  static Map<String, dynamic>? createMentionMetadata(
+    String text,
+    List<Map<String, dynamic>> chatMembers,
+  ) {
     final mentions = parseMentions(text, chatMembers);
     if (mentions.isEmpty) return null;
-    
+
     return {
-      'mentions': mentions.map((m) => {
-        'user_id': m['user_id'],
-        'username': m['username'],
-      }).toList(),
+      'mentions': mentions
+          .map((m) => {'user_id': m['user_id'], 'username': m['username']})
+          .toList(),
     };
   }
 
@@ -1970,10 +2730,9 @@ class ChatService extends ChangeNotifier {
     Map<String, dynamic>? metadata;
     if (mentions != null && mentions.isNotEmpty) {
       metadata = {
-        'mentions': mentions.map((m) => {
-          'user_id': m['user_id'],
-          'username': m['username'],
-        }).toList(),
+        'mentions': mentions
+            .map((m) => {'user_id': m['user_id'], 'username': m['username']})
+            .toList(),
       };
     }
 
@@ -1985,11 +2744,47 @@ class ChatService extends ChangeNotifier {
     );
   }
 
+  /// Mention ve efekt ile mesaj gönder (Premium)
+  Future<bool> sendMessageWithMentionsAndEffect({
+    required String chatId,
+    required String content,
+    List<Map<String, dynamic>>? mentions,
+    String? replyToId,
+    String? effect,
+  }) async {
+    Map<String, dynamic>? metadata;
+
+    // Metadata oluştur
+    if ((mentions != null && mentions.isNotEmpty) || effect != null) {
+      metadata = {};
+
+      if (mentions != null && mentions.isNotEmpty) {
+        metadata['mentions'] = mentions
+            .map((m) => {'user_id': m['user_id'], 'username': m['username']})
+            .toList();
+      }
+
+      if (effect != null) {
+        metadata['effect'] = effect;
+      }
+    }
+
+    return sendMessage(
+      chatId: chatId,
+      content: content,
+      replyToId: replyToId,
+      metadata: metadata,
+    );
+  }
+
   /// Gruptaki kullanıcıları @ araması için getir
-  Future<List<Map<String, dynamic>>> searchMentionableUsers(String chatId, String query) async {
+  Future<List<Map<String, dynamic>>> searchMentionableUsers(
+    String chatId,
+    String query,
+  ) async {
     try {
       final members = await getGroupMembers(chatId);
-      
+
       if (query.isEmpty) {
         return members;
       }
@@ -1999,7 +2794,7 @@ class ChatService extends ChangeNotifier {
         final profile = member['profiles'] as Map<String, dynamic>?;
         final username = (profile?['username'] ?? '').toString().toLowerCase();
         final fullName = (profile?['full_name'] ?? '').toString().toLowerCase();
-        
+
         return username.contains(lowerQuery) || fullName.contains(lowerQuery);
       }).toList();
     } catch (e) {
@@ -2015,9 +2810,13 @@ class ChatService extends ChangeNotifier {
     try {
       final messages = await _supabase.client
           .from('messages')
-          .select('*, sender:profiles!sender_id(id, username, full_name, avatar_url)')
+          .select(
+            '*, sender:profiles!sender_id(id, username, full_name, avatar_url)',
+          )
           .eq('chat_id', chatId)
-          .contains('metadata->mentions', [{'user_id': currentUserId}])
+          .contains('metadata->mentions', [
+            {'user_id': currentUserId},
+          ])
           .order('created_at', ascending: false)
           .limit(50);
 

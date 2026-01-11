@@ -2,7 +2,7 @@ enum MessageStatus { sending, sent, delivered, read }
 
 class ChatPreview {
   final String id;         // chatId
-  final String oderId;     // karşı tarafın id'si (grup için boş olabilir)
+  final String otherUserId; // karşı tarafın id'si (grup için boş olabilir)
   final String name;
   final String lastMessage;
   final String time;       // UI string
@@ -19,10 +19,10 @@ class ChatPreview {
     required this.online,
     this.isGroup = false,
     this.avatarUrl,
-  }) : oderId = userId;
+  }) : otherUserId = userId;
   
   /// userId getter (eski kodlarla uyumluluk)
-  String get userId => oderId;
+  String get userId => otherUserId;
 }
 
 /// Mesaj tipleri
@@ -38,6 +38,7 @@ class Message {
   final MessageType type;
   final String? mediaUrl;
   final Map<String, dynamic>? metadata;
+  final bool isStarred;
 
   const Message({
     required this.id,
@@ -49,6 +50,7 @@ class Message {
     this.type = MessageType.text,
     this.mediaUrl,
     this.metadata,
+    this.isStarred = false,
   });
 
   bool get isMe => senderId == 'me';
@@ -72,6 +74,7 @@ class Message {
     MessageType? type,
     String? mediaUrl,
     Map<String, dynamic>? metadata,
+    bool? isStarred,
   }) {
     return Message(
       id: id ?? this.id,
@@ -83,6 +86,7 @@ class Message {
       type: type ?? this.type,
       mediaUrl: mediaUrl ?? this.mediaUrl,
       metadata: metadata ?? this.metadata,
+      isStarred: isStarred ?? this.isStarred,
     );
   }
 
@@ -109,9 +113,56 @@ class Message {
   }
 }
 
+
 class Presence {
   final bool online;
-  final DateTime lastSeenAt;
+  final DateTime? lastSeenAt;
 
-  const Presence({required this.online, required this.lastSeenAt});
+  const Presence({required this.online, this.lastSeenAt});
+
+  /// Kullanıcının gerçekten çevrimiçi olup olmadığını kontrol eder.
+  /// is_online bayrağı true olsa bile, son görülme 3 dakikadan eskiyse offline kabul eder.
+  bool get isEffectivelyOnline {
+    if (!online) return false;
+    if (lastSeenAt == null) return true; // Bilinmiyor durumu, bayrağa güven
+    
+    final diff = DateTime.now().toUtc().difference(lastSeenAt!.toUtc()).inMinutes.abs();
+    return diff <= 3;
+  }
+}
+
+class ChatParticipant {
+  final String userId;
+  final String role; // 'admin' | 'member'
+  final DateTime? joinedAt;
+  final String? username;
+  final String? fullName;
+  final String? avatarUrl;
+  final bool isOnline;
+  final DateTime? lastSeen;
+
+  const ChatParticipant({
+    required this.userId,
+    required this.role,
+    this.joinedAt,
+    this.username,
+    this.fullName,
+    this.avatarUrl,
+    this.isOnline = false,
+    this.lastSeen,
+  });
+
+  factory ChatParticipant.fromJson(Map<String, dynamic> json) {
+    final profile = json['profiles'] as Map<String, dynamic>? ?? {};
+    return ChatParticipant(
+      userId: json['user_id'] as String,
+      role: json['role'] as String? ?? 'member',
+      joinedAt: json['joined_at'] != null ? DateTime.parse(json['joined_at']) : null,
+      username: profile['username'] as String?,
+      fullName: profile['full_name'] as String?,
+      avatarUrl: profile['avatar_url'] as String?,
+      isOnline: profile['is_online'] as bool? ?? false,
+      lastSeen: profile['last_seen'] != null ? DateTime.parse(profile['last_seen']) : null,
+    );
+  }
 }

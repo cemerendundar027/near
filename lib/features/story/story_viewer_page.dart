@@ -344,7 +344,7 @@ class _StoryViewerPageState extends State<StoryViewerPage> {
                             child: index == _currentStoryIndex
                                 ? ValueListenableBuilder<double>(
                                     valueListenable: _progress,
-                                    builder: (_, v, __) => ClipRRect(
+                                    builder: (context, v, child) => ClipRRect(
                                       borderRadius: BorderRadius.circular(999),
                                       child: LinearProgressIndicator(
                                         value: v,

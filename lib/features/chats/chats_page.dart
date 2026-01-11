@@ -4,13 +4,13 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme.dart';
 import '../../shared/chat_store.dart';
 import '../../shared/chat_service.dart';
+import '../../shared/contact_service.dart';
 import '../../shared/models.dart';
 import '../../shared/story_service.dart';
 import '../../shared/mood_aura.dart';
 import '../../shared/widgets/swipe_actions.dart';
 import '../../shared/widgets/shimmer_loading.dart';
 import 'chat_extras_pages.dart';
-import 'create_group_page.dart';
 import '../story/story_viewer_page.dart';
 
 class ChatsPage extends StatefulWidget {
@@ -25,6 +25,7 @@ class _ChatsPageState extends State<ChatsPage> {
   final store = ChatStore.instance;
   final chatService = ChatService.instance;
   final storyService = StoryService.instance;
+  final contactService = ContactService.instance;
   // ignore: prefer_final_fields
   String _query = '';
   int _filterIndex = 0; // 0: Tümü, 1: Okunmamış, 2: Gruplar
@@ -38,6 +39,7 @@ class _ChatsPageState extends State<ChatsPage> {
 
   Future<void> _loadChats() async {
     await chatService.init();
+    await contactService.init();
     await storyService.loadStories();
     if (mounted) setState(() => _isLoading = false);
   }
@@ -361,215 +363,7 @@ class _ChatsPageState extends State<ChatsPage> {
     }
   }
 
-  void _showNewChatSheet() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cs = Theme.of(context).colorScheme;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.8,
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: isDark ? Colors.white24 : Colors.black26,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: Text(
-                      'İptal',
-                      style: TextStyle(color: NearTheme.primary, fontSize: 17),
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    'Yeni Sohbet',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                  const Spacer(),
-                  const SizedBox(width: 60),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Ara',
-                    hintStyle: TextStyle(
-                      color: isDark ? Colors.white38 : Colors.black38,
-                    ),
-                    border: InputBorder.none,
-                    icon: Icon(
-                      Icons.search,
-                      color: isDark ? Colors.white38 : Colors.black38,
-                    ),
-                  ),
-                  style: TextStyle(color: cs.onSurface),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // New Group / New Contact
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF2C2C2E) : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: NearTheme.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.group_add,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    title: Text(
-                      'Yeni Grup',
-                      style: TextStyle(
-                        color: NearTheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const CreateGroupPage(),
-                        ),
-                      );
-                    },
-                  ),
-                  Divider(
-                    height: 1,
-                    indent: 60,
-                    color: isDark ? Colors.white12 : Colors.black12,
-                  ),
-                  ListTile(
-                    leading: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: NearTheme.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.person_add,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    title: Text(
-                      'Yeni Kişi',
-                      style: TextStyle(
-                        color: NearTheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const NewContactPage(),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'KİŞİLER',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white54 : Colors.black54,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: ListView.builder(
-                itemCount: store.chats.length,
-                itemBuilder: (_, i) {
-                  final chat = store.chats[i];
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: isDark
-                          ? Colors.white12
-                          : Colors.grey.shade300,
-                      child: Icon(
-                        Icons.person,
-                        color: isDark ? Colors.white54 : Colors.grey.shade600,
-                      ),
-                    ),
-                    title: Text(
-                      chat.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        color: cs.onSurface,
-                      ),
-                    ),
-                    subtitle: Text(
-                      'Çevrimiçi',
-                      style: TextStyle(fontSize: 13, color: NearTheme.primary),
-                    ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _openChat(chat);
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // NOT: _showNewChatSheet metodu NewChatPage sayfası kullanıldığı için kaldırıldı
 
   @override
   Widget build(BuildContext context) {
@@ -587,8 +381,13 @@ class _ChatsPageState extends State<ChatsPage> {
         // Filtreleme
         List<ChatPreview> filtered;
         switch (_filterIndex) {
-          case 1: // Okunmamış
-            filtered = all.where((c) => store.unreadCount(c.id) > 0).toList();
+          case 1: // Okunmamış - ChatService'den unread count al
+            filtered = all.where((c) {
+              final unread = chatService.getCachedUnreadCount(c.id) > 0 
+                  ? chatService.getCachedUnreadCount(c.id)
+                  : store.unreadCount(c.id);
+              return unread > 0;
+            }).toList();
             break;
           case 2: // Gruplar
             filtered = all.where((c) => c.isGroup).toList();
@@ -855,7 +654,7 @@ class _ChatsPageState extends State<ChatsPage> {
                         );
                         final online = supabaseChat.isNotEmpty 
                             ? chatService.isOtherUserOnline(supabaseChat)
-                            : store.presenceOf(chat.userId).online;
+                            : store.presenceOf(chat.userId).isEffectivelyOnline;
 
                         return SwipeableChatTile(
                           isPinned: pinned,

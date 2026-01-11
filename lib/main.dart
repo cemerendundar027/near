@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import 'app/app.dart';
 import 'app/app_settings.dart';
 import 'shared/accessibility.dart';
@@ -15,6 +17,9 @@ import 'shared/supabase_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Timeago Türkçe locale
+  timeago.setLocaleMessages('tr', timeago.TrMessages());
   
   // Supabase'i başlat
   await SupabaseService.instance.init();
@@ -60,21 +65,42 @@ void main() async {
 
 /// Uygulama yaşam döngüsü observer'ı - online durumu yönetir
 class AppLifecycleObserver extends WidgetsBindingObserver {
+  Timer? _heartbeatTimer;
+  bool _isOnline = false;
+  
+  void startHeartbeat() {
+    _isOnline = true;
+    ChatService.instance.setOnlineStatus(true);
+    
+    // Her 30 saniyede bir online durumunu güncelle (heartbeat)
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_isOnline) {
+        ChatService.instance.setOnlineStatus(true);
+      }
+    });
+  }
+  
+  void stopHeartbeat() {
+    _isOnline = false;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    ChatService.instance.setOnlineStatus(false);
+  }
+  
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final chatService = ChatService.instance;
-    
     switch (state) {
       case AppLifecycleState.resumed:
-        // Uygulama öne geldi - online ol
-        chatService.setOnlineStatus(true);
+        // Uygulama öne geldi - online ol ve heartbeat başlat
+        startHeartbeat();
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
-        // Uygulama arka plana geçti - offline ol
-        chatService.setOnlineStatus(false);
+        // Uygulama arka plana geçti - offline ol ve heartbeat durdur
+        stopHeartbeat();
         break;
     }
   }

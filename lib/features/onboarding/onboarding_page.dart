@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/app_settings.dart';
 import '../../app/theme.dart';
 
 class OnboardingPage extends StatefulWidget {
@@ -49,7 +50,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   void _completeOnboarding() {
-    // TODO: Save onboarding completed to SharedPreferences
+    // Onboarding tamamlandı olarak kaydet
+    AppSettings.instance.setOnboardingCompleted(true);
     context.go('/auth');
   }
 

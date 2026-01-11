@@ -28,7 +28,6 @@ class MediaGalleryPage extends StatefulWidget {
 class _MediaGalleryPageState extends State<MediaGalleryPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  bool _isLoading = true;
 
   // Supabase'den yüklenen veriler
   List<MediaItem> _photos = [];
@@ -90,14 +89,10 @@ class _MediaGalleryPageState extends State<MediaGalleryPage>
               url: m['media_url'],
             );
           }).toList();
-          
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      // Silent fail - medya yüklenemezse boş liste göster
     }
   }
 
@@ -754,7 +749,7 @@ class _FullScreenPhotoViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // isDark kaldırıldı - kullanılmıyordu
     
     return Scaffold(
       backgroundColor: Colors.black,

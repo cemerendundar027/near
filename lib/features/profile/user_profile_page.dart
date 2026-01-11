@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/theme.dart';
 import '../../shared/chat_service.dart';
+import '../../shared/chat_store.dart';
 import '../chats/media_gallery_page.dart';
 
 /// Kullanıcı Profil Görüntüleme Sayfası
@@ -37,7 +38,6 @@ class UserProfilePage extends StatefulWidget {
 class _UserProfilePageState extends State<UserProfilePage> {
   bool _isBlocked = false;
   bool _isMuted = false;
-  bool _isLoading = true;
 
   // Canlı online durumu takibi
   final _store = ChatStore.instance;
@@ -47,7 +47,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
   List<CommonGroup> _commonGroups = [];
   
   // Medya öğeleri (şimdilik boş, ileride ChatService'den yüklenecek)
-  List<MediaThumbnail> _mediaItems = [];
+  final List<MediaThumbnail> _mediaItems = [];
 
   @override
   void initState() {
@@ -72,13 +72,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
             name: g['name'] ?? 'Grup',
             memberCount: g['member_count'] ?? 0,
           )).toList();
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      debugPrint('Error loading user profile data: $e');
     }
   }
   

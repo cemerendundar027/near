@@ -140,7 +140,7 @@ class _GifPickerState extends State<GifPicker> {
             
             debugPrint('GIF URL: $mainUrl');
             
-            return GifItem(
+      return GifItem(
               id: r['id']?.toString() ?? '',
               url: mainUrl,
               previewUrl: previewUrl,
@@ -277,7 +277,7 @@ class _GifPickerState extends State<GifPicker> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
               controller: _searchController,
-              onChanged: (v) => setState(() => _searchQuery = v),
+              onChanged: _onSearch,
               decoration: InputDecoration(
                 hintText: 'GIF ara...',
                 prefixIcon: const Icon(Icons.search),
@@ -314,10 +314,7 @@ class _GifPickerState extends State<GifPicker> {
               itemBuilder: (context, index) {
                 final isSelected = index == _selectedCategory;
                 return GestureDetector(
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    setState(() => _selectedCategory = index);
-                  },
+                  onTap: () => _onCategoryChanged(index),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
@@ -449,7 +446,7 @@ class _GifPickerSheetState extends State<_GifPickerSheet> {
                          nano?['dims'] as List<dynamic>? ?? 
                          [200, 150];
             
-            return GifItem(
+      return GifItem(
               id: r['id']?.toString() ?? '',
               url: mainUrl,
               previewUrl: previewUrl,
@@ -594,7 +591,7 @@ class _GifPickerSheetState extends State<_GifPickerSheet> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _categories.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
               itemBuilder: (context, index) {
                 final isSelected = index == _selectedCategory;
                 return GestureDetector(

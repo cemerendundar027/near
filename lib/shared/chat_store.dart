@@ -15,6 +15,7 @@ class ChatStore extends ChangeNotifier {
 
   // Chat listesi cache (Supabase'den güncellenir)
   List<ChatPreview> _chats = [];
+  List<ChatPreview>? _cachedChats; // Cache for the sorted/filtered list
 
   final Map<String, int> _unread = {};
   final Map<String, bool> _typing = {};
@@ -68,11 +69,10 @@ class ChatStore extends ChangeNotifier {
   void _onChatServiceUpdate() {
     // ChatService güncellendiğinde cache'i güncelle
     _chats = _convertSupabaseChats();
+    _cachedChats = null; // Invalidate cache
     
     // UI'ı güncelle (build sonrasında)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      notifyListeners();
-    });
+    _safeNotify();
   }
 
   void _loadFromStorage() {
@@ -140,6 +140,8 @@ class ChatStore extends ChangeNotifier {
   }
 
   List<ChatPreview> get chats {
+    if (_cachedChats != null) return _cachedChats!;
+
     // Supabase'den gelen chatler
     final list = _convertSupabaseChats();
     
@@ -150,7 +152,9 @@ class ChatStore extends ChangeNotifier {
       if (ap == bp) return 0;
       return ap ? -1 : 1;
     });
-    return List.unmodifiable(list);
+    
+    _cachedChats = List.unmodifiable(list);
+    return _cachedChats!;
   }
   
   /// Sadece grup sohbetleri
@@ -257,10 +261,31 @@ class ChatStore extends ChangeNotifier {
 
   Presence presenceOf(String userId) {
     return _presenceByUserId[userId] ??
-        Presence(
+        const Presence(
           online: false,
-          lastSeenAt: DateTime.now().subtract(const Duration(hours: 2)),
+          lastSeenAt: null, // Bilinmiyor durumu
         );
+  }
+
+  void updatePresence(String userId, {bool? online, DateTime? lastSeenAt}) {
+    final current = presenceOf(userId);
+    
+    // online true ise ve lastSeenAt null ise şimdi (UTC) olarak belirle
+    DateTime? finalLastSeen = lastSeenAt ?? current.lastSeenAt;
+    if (online == true && lastSeenAt == null) {
+      finalLastSeen = DateTime.now().toUtc();
+    }
+
+    final newState = Presence(
+      online: online ?? current.online,
+      lastSeenAt: finalLastSeen,
+    );
+    
+    // Değişiklik varsa güncelle ve bildir
+    if (current.online != newState.online || current.lastSeenAt != newState.lastSeenAt) {
+      _presenceByUserId[userId] = newState;
+      _safeNotify();
+    }
   }
 
   void setPresence(String userId, Presence p) {
@@ -314,6 +339,7 @@ class ChatStore extends ChangeNotifier {
   }
 
   void _safeNotify() {
+    _cachedChats = null; // Invalidate cache on any change
     final phase = SchedulerBinding.instance.schedulerPhase;
     final isBuilding =
         phase == SchedulerPhase.persistentCallbacks ||
@@ -416,7 +442,7 @@ class ChatStore extends ChangeNotifier {
 
         _presenceByUserId[c.userId] = Presence(
           online: c.online,
-          lastSeenAt: DateTime.now(),
+          lastSeenAt: DateTime.now().toUtc(),
         );
         _safeNotify();
       });

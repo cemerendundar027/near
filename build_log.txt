@@ -1,0 +1,95 @@
+Resolving dependencies...
+Downloading packages...
+  app_links 6.4.1 (7.0.0 available)
+  audio_session 0.1.25 (0.2.2 available)
+  characters 1.4.0 (1.4.1 available)
+  connectivity_plus 6.1.5 (7.0.0 available)
+  file_picker 8.3.7 (10.3.8 available)
+  geocoding 3.0.0 (4.0.0 available)
+  geocoding_android 3.3.1 (4.0.1 available)
+  geocoding_platform_interface 3.2.0 (5.0.0 available)
+  geolocator 13.0.4 (14.0.2 available)
+  geolocator_android 4.6.2 (5.0.2 available)
+  go_router 14.8.1 (17.0.1 available)
+  just_audio 0.9.46 (0.10.5 available)
+  local_auth 2.3.0 (3.0.0 available)
+  local_auth_android 1.0.56 (2.0.4 available)
+  local_auth_darwin 1.6.1 (2.0.1 available)
+  local_auth_windows 1.0.11 (2.0.1 available)
+  matcher 0.12.17 (0.12.18 available)
+  material_color_utilities 0.11.1 (0.13.0 available)
+  mobile_scanner 5.2.3 (7.1.4 available)
+  permission_handler 11.4.0 (12.0.1 available)
+  permission_handler_android 12.1.0 (13.0.1 available)
+  record 5.2.1 (6.1.2 available)
+! record_linux 1.2.1 (overridden)
+  test_api 0.7.7 (0.7.8 available)
+Got dependencies!
+23 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Building com.example.near for simulator (ios)...
+Running Xcode build...                                          
+Xcode build done.                                           19.4s
+Failed to build iOS app
+Error output from Xcode build:
+↳
+    ** BUILD FAILED **
+
+
+Xcode's output:
+↳
+    Writing result bundle at path:
+    	/var/folders/nx/5mz3d4112sd444gh6wvvjfm00000gn/T/flutter_tools.Ranych/flutter_ios_build_temp_dirFnOKSg/temporary_xcresult_bundle
+
+    lib/features/chats/new_chat_page.dart:5:8: Error: Error when reading 'lib/features/chats/create_group_page.dart': No such file or directory
+    import 'create_group_page.dart';
+           ^
+    lib/features/chats/chats_page.dart:13:8: Error: Error when reading 'lib/features/chats/create_group_page.dart': No such file or directory
+    import 'create_group_page.dart';
+           ^
+    lib/app/app.dart:240:24: Error: The method 'GroupInfoPage' isn't defined for the type '_NearAppState'.
+     - '_NearAppState' is from 'package:near/app/app.dart' ('lib/app/app.dart').
+    Try correcting the name to the name of an existing method, or defining a method named 'GroupInfoPage'.
+                    return GroupInfoPage(groupId: groupId);
+                           ^^^^^^^^^^^^^
+    lib/features/chats/new_chat_page.dart:144:37: Error: Not a constant expression.
+            builder: (context) => const CreateGroupPage(),
+                                        ^^^^^^^^^^^^^^^
+    lib/features/chats/chats_page.dart:474:49: Error: Not a constant expression.
+                              builder: (_) => const CreateGroupPage(),
+                                                    ^^^^^^^^^^^^^^^
+    Target kernel_snapshot_program failed: Exception
+    Failed to package /Users/user/Desktop/near.
+    Command PhaseScriptExecution failed with a nonzero exit code
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'SDWebImage-SDWebImage' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'SDWebImage' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'SwiftyGif-SwiftyGif' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'SwiftyGif' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'DKPhotoGallery-DKPhotoGallery' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'DKPhotoGallery' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'DKImagePickerController-DKImagePickerController' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'DKImagePickerController' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GTMSessionFetcher-GTMSessionFetcher_Core_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GTMSessionFetcher' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'PromisesObjC-FBLPromises_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'PromisesObjC' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleUtilities-GoogleUtilities_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleUtilities' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'nanopb-nanopb_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'nanopb' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleDataTransport-GoogleDataTransport_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleDataTransport' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleToolboxForMac-GoogleToolboxForMac_Logger_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleToolboxForMac-GoogleToolboxForMac_Privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleToolboxForMac' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 10.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'GoogleUtilitiesComponents' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'geocoding_ios-geocoding_ios_privacy' from project 'Pods')
+    warning: no rule to process file '/Users/user/.pub-cache/hosted/pub.dev/geocoding_ios-3.1.0/ios/geocoding_ios/Sources/geocoding_ios/PrivacyInfo.xcprivacy' of type 'text.xml' for architecture 'arm64' (in target 'geocoding_ios' from project 'Pods')
+    warning: no rule to process file '/Users/user/.pub-cache/hosted/pub.dev/geocoding_ios-3.1.0/ios/geocoding_ios/Sources/geocoding_ios/PrivacyInfo.xcprivacy' of type 'text.xml' for architecture 'x86_64' (in target 'geocoding_ios' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'geolocator_apple-geolocator_apple_privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 9.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'permission_handler_apple-permission_handler_apple_privacy' from project 'Pods')
+    /Users/user/Desktop/near/ios/Pods/Pods.xcodeproj: warning: The iOS Simulator deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the range of supported deployment target versions is 12.0 to 17.2.99. (in target 'record_darwin-record_darwin_privacy' from project 'Pods')
+    note: Run script build phase 'Run Script' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'Runner' from project 'Runner')
+    note: Run script build phase 'Thin Binary' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'Runner' from project 'Runner')
+
+Encountered error while building for simulator.

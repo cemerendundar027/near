@@ -170,6 +170,8 @@ class _QRScannerPageState extends State<QRScannerPage>
     // Kullanıcı bilgilerini getir
     final profile = await SupabaseService.instance.getProfile(userId);
     
+    if (!mounted) return;
+    
     if (profile == null) {
       _toast('Kullanıcı bulunamadı', isError: true);
       return;
@@ -236,13 +238,15 @@ class _QRScannerPageState extends State<QRScannerPage>
       ),
     );
 
-    if (confirmed == true) {
+    if (confirmed == true && mounted) {
       final success = await _contactService.addContact(userId);
-      if (success) {
-        _toast('$name kişilere eklendi');
-        if (mounted) Navigator.pop(context, userId);
-      } else {
-        _toast('Kişi eklenemedi', isError: true);
+      if (mounted) {
+        if (success) {
+          _toast('$name kişilere eklendi');
+          Navigator.pop(context, userId);
+        } else {
+          _toast('Kişi eklenemedi', isError: true);
+        }
       }
     }
   }
@@ -630,9 +634,11 @@ class _MyQRCodePageState extends State<MyQRCodePage> {
 
   void _shareQRCode() {
     final qrData = 'near://user/$_userId';
-    Share.share(
-      'Near\'da beni ekle: $qrData\n\nNear uygulamasını indir ve bu linki kullanarak beni kişilerine ekle!',
-      subject: 'Near - Kişi Ekle',
+    SharePlus.instance.share(
+      ShareParams(
+        text: 'Near\'da beni ekle: $qrData\n\nNear uygulamasını indir ve bu linki kullanarak beni kişilerine ekle!',
+        title: 'Near - Kişi Ekle',
+      ),
     );
   }
 
@@ -733,7 +739,7 @@ class _MyQRCodePageState extends State<MyQRCodePage> {
                               child: Image.network(
                                 _userAvatar!,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Center(
+                                errorBuilder: (context, error, stackTrace) => Center(
                                   child: Text(
                                     displayName[0].toUpperCase(),
                                     style: const TextStyle(

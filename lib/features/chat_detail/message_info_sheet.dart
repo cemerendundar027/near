@@ -35,7 +35,6 @@ class MessageInfoSheet extends StatefulWidget {
 class _MessageInfoSheetState extends State<MessageInfoSheet> {
   DateTime? _deliveredAt;
   DateTime? _readAt;
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -56,13 +55,10 @@ class _MessageInfoSheetState extends State<MessageInfoSheet> {
           _readAt = status?['read_at'] != null 
               ? DateTime.tryParse(status!['read_at']) 
               : null;
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      // Hata durumunda sess silent fail
     }
   }
 

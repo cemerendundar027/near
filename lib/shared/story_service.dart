@@ -108,7 +108,7 @@ class StoryService extends ChangeNotifier {
   // Cached data
   List<UserStories> _userStories = [];
   List<Story> _myStories = [];
-  Map<String, List<StoryViewer>> _storyViewers = {};
+  final Map<String, List<StoryViewer>> _storyViewers = {};
   Set<String> _viewedStoryIds = {};
   
   bool _isLoading = false;
@@ -377,18 +377,25 @@ class StoryService extends ChangeNotifier {
 
       _viewedStoryIds.add(storyId);
       
-      // views_count güncelle
-      await _supabase.client.rpc('increment_story_views', params: {
-        'story_id': storyId,
-      }).catchError((_) {
-        // RPC yoksa manuel güncelle
-        return _supabase.client
-            .from('stories')
-            .update({'views_count': 1}) // Bu basit bir increment değil ama şimdilik yeterli
-            .eq('id', storyId);
-      });
+      // views_count'u güncelle - önce kaç kişinin görüntülediğini say
+      final viewCountResult = await _supabase.client
+          .from('story_views')
+          .count()
+          .eq('story_id', storyId);
+      
+      final viewCount = viewCountResult;
+      
+      // Sonra stories tablosunu güncelle
+      await _supabase.client
+          .from('stories')
+          .update({'views_count': viewCount})
+          .eq('id', storyId);
 
-      debugPrint('StoryService: Story $storyId marked as viewed');
+      debugPrint('StoryService: Story $storyId marked as viewed (views: $viewCount)');
+      
+      // Story listesini yenile ki views_count güncellensin
+      await loadStories();
+      
       notifyListeners();
     } catch (e) {
       debugPrint('StoryService: Error marking story as viewed: $e');
@@ -495,9 +502,7 @@ class StoryService extends ChangeNotifier {
       String? chatId = await chatService.findExistingDirectChat(storyOwnerId);
       
       // Yoksa yeni chat oluştur
-      if (chatId == null) {
-        chatId = await chatService.createDirectChat(storyOwnerId);
-      }
+      chatId ??= await chatService.createDirectChat(storyOwnerId);
       
       if (chatId == null) {
         debugPrint('StoryService: Could not create/find chat');

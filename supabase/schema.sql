@@ -198,7 +198,13 @@ CREATE POLICY "Users can create chats" ON chats FOR INSERT WITH CHECK (auth.uid(
 -- CHAT_PARTICIPANTS RLS
 ALTER TABLE chat_participants ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view their participations" ON chat_participants;
-CREATE POLICY "Users can view their participations" ON chat_participants FOR SELECT USING (user_id = auth.uid());
+-- Kullanıcılar kendi katıldıkları sohbetlerin tüm katılımcılarını görebilir
+CREATE POLICY "Users can view their participations" ON chat_participants FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM chat_participants cp 
+    WHERE cp.chat_id = chat_participants.chat_id AND cp.user_id = auth.uid()
+  )
+);
 DROP POLICY IF EXISTS "Users can update their participations" ON chat_participants;
 CREATE POLICY "Users can update their participations" ON chat_participants FOR UPDATE USING (user_id = auth.uid());
 DROP POLICY IF EXISTS "Users can insert participations" ON chat_participants;
@@ -221,7 +227,11 @@ CREATE POLICY "Users can update own messages" ON messages FOR UPDATE USING (send
 -- MESSAGE_STATUS RLS
 ALTER TABLE message_status ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view message status" ON message_status;
-CREATE POLICY "Users can view message status" ON message_status FOR SELECT USING (user_id = auth.uid());
+-- Kullanıcı kendi durumunu veya gönderdiği mesajların durumlarını görebilir
+CREATE POLICY "Users can view message status" ON message_status FOR SELECT USING (
+  user_id = auth.uid() OR
+  EXISTS (SELECT 1 FROM messages WHERE id = message_id AND sender_id = auth.uid())
+);
 DROP POLICY IF EXISTS "Users can manage message status" ON message_status;
 CREATE POLICY "Users can manage message status" ON message_status FOR ALL USING (user_id = auth.uid());
 
@@ -311,6 +321,70 @@ DROP TRIGGER IF EXISTS on_message_created ON messages;
 CREATE TRIGGER on_message_created
   AFTER INSERT ON messages
   FOR EACH ROW EXECUTE FUNCTION handle_new_message();
+
+-- ============================================================================
+-- USER SESSIONS / LINKED DEVICES
+-- ============================================================================
+
+-- Kullanıcı oturum bilgileri (linked devices için)
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  
+  -- Cihaz bilgileri
+  device_name TEXT NOT NULL,
+  device_type TEXT NOT NULL CHECK (device_type IN ('mobile', 'web', 'desktop')),
+  device_os TEXT,
+  device_model TEXT,
+  
+  -- App bilgileri
+  app_version TEXT,
+  user_agent TEXT,
+  
+  -- Lokasyon bilgileri
+  ip_address TEXT,
+  country TEXT,
+  city TEXT,
+  
+  -- Session bilgileri
+  last_active_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  
+  -- Meta
+  is_current BOOLEAN DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS user_sessions_user_id_idx ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS user_sessions_last_active_idx ON user_sessions(last_active_at);
+CREATE INDEX IF NOT EXISTS user_sessions_is_current_idx ON user_sessions(is_current);
+
+-- RLS Policies
+ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their own sessions"
+  ON user_sessions FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own sessions"
+  ON user_sessions FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own sessions"
+  ON user_sessions FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own sessions"
+  ON user_sessions FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Eski session'ları temizle (30 günden eski)
+CREATE OR REPLACE FUNCTION cleanup_expired_sessions()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM user_sessions 
+  WHERE last_active_at < NOW() - INTERVAL '30 days';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
 -- TAMAMLANDI!

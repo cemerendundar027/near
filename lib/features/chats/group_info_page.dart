@@ -166,7 +166,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                     Image.network(
                       avatarUrl,
                       fit: BoxFit.cover,
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                       colorBlendMode: BlendMode.darken,
                     ),
                   Center(
@@ -289,7 +289,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
 
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: NearTheme.primary.withOpacity(0.2),
+                          backgroundColor: NearTheme.primary.withValues(alpha: 0.2),
                           backgroundImage: participant.avatarUrl != null 
                              ? NetworkImage(participant.avatarUrl!) 
                              : null,
@@ -317,9 +317,9 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                             ? Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: NearTheme.primary.withOpacity(0.1),
+                                  color: NearTheme.primary.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: NearTheme.primary.withOpacity(0.5)),
+                                  border: Border.all(color: NearTheme.primary.withValues(alpha: 0.5)),
                                 ),
                                 child: Text(
                                   'Yönetici',
@@ -413,7 +413,7 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // isDark kaldırıldı - kullanılmıyordu
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),

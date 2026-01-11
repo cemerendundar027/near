@@ -13,7 +13,6 @@ import 'package:video_player/video_player.dart';
 import '../../app/theme.dart';
 import '../../shared/chat_store.dart';
 import '../../shared/chat_service.dart';
-import '../../shared/supabase_service.dart';
 import '../../shared/audio_service.dart';
 import '../../shared/message_store.dart';
 import '../../shared/models.dart';
@@ -30,7 +29,6 @@ import '../chats/chat_extras_pages.dart';
 import '../chats/group_info_page.dart';
 import 'message_info_sheet.dart';
 import '../../shared/message_effects.dart';
-import '../../shared/mood_aura.dart';
 import '../../shared/settings_service.dart';
 
 class ChatDetailPage extends StatefulWidget {
@@ -59,21 +57,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   late ChatPreview _chat;
   Map<String, dynamic>? _supabaseChat; // Supabase'den gelen chat bilgisi
-  
+
   // Supabase realtime channel
   RealtimeChannel? _messagesChannel;
   RealtimeChannel? _messageStatusChannel;
+  RealtimeChannel? _reactionsChannel;
   StreamSubscription? _presenceSubscription; // Stream subscription for presence
   List<Map<String, dynamic>> _supabaseMessages = [];
+  List<Message>? _cachedMessages; // Cache for processed messages
   bool _useSupabase = false;
-  
-  // Gizlilik kontrol durumları
+
+  // Gizlilik kontrol durumları (Phase 6'da calls için kullanılacak)
+  // ignore: unused_field
   bool _canSeeLastSeen = true;
   bool _canSeeReadReceipts = true;
-  
+  bool _canSeeProfilePhoto = true;
+
   // Gerçek zamanlı online durumu
   // Gerçek zamanlı online durumu - Artık ChatStore'dan takip ediliyor
-  
+
   // Supabase'den chat adı
   String get _chatName {
     if (_supabaseChat != null) {
@@ -81,63 +83,78 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
     return _chat.name;
   }
-  
-  bool get _isOtherUserOnline {
-    // Gizlilik kontrolü
-    if (!_canSeeLastSeen) return false;
-    return store.presenceOf(_chat.userId).online;
-  }
-  
+
+  // Online durumu kontrolü için _canSeeLastSeen ve store.presenceOf kullanılıyor
+  // Widget ağacında doğrudan erişildiği için getter burada tanımlanmıyor
+
   // Mesaj durumu cache'i (messageId -> status)
   final Map<String, MessageStatus> _messageStatusCache = {};
-  
-  List<Message> get _messages {
-    if (_useSupabase && _supabaseMessages.isNotEmpty) {
-      final currentUserId = chatService.currentUserId;
-      // Mesajları created_at'e göre sırala (eski -> yeni)
-      final sortedMessages = List<Map<String, dynamic>>.from(_supabaseMessages)
-        ..sort((a, b) {
-          final aTime = DateTime.tryParse(a['created_at'] ?? '') ?? DateTime.now();
-          final bTime = DateTime.tryParse(b['created_at'] ?? '') ?? DateTime.now();
-          return aTime.compareTo(bTime);
-        });
-      
-      return sortedMessages.map((m) {
-        final senderId = m['sender_id'] ?? '';
-        final messageId = m['id'] ?? '';
-        // Kendi mesajlarım için 'me' kullan, böylece sağda görünür
-        final isMe = senderId == currentUserId;
-        
-        // Mesaj durumunu belirle
-        MessageStatus status = MessageStatus.sent;
-        if (isMe) {
-          // Kendi mesajım - cache'den veya varsayılan
-          status = _messageStatusCache[messageId] ?? MessageStatus.sent;
-        }
 
-        // Mesaj tipini parse et
-        final typeStr = m['type'] as String?;
-        final type = Message.parseType(typeStr);
-        
-        // Metadata'yı parse et
-        final rawMetadata = m['metadata'];
-        Map<String, dynamic>? metadata;
-        if (rawMetadata is Map) {
-          metadata = Map<String, dynamic>.from(rawMetadata);
-        }
-        
-        return Message(
-          id: messageId,
-          chatId: m['chat_id'] ?? _chat.id,
-          senderId: isMe ? 'me' : senderId,
-          text: m['content'] ?? '',
-          createdAt: DateTime.tryParse(m['created_at'] ?? '') ?? DateTime.now(),
-          status: status,
-          type: type,
-          mediaUrl: m['media_url'] as String?,
-          metadata: metadata,
+  List<Message> get _messages {
+    if (_useSupabase) {
+      if (_cachedMessages != null) return _cachedMessages!;
+
+      if (_supabaseMessages.isNotEmpty) {
+        debugPrint(
+          'ChatDetailPage: Mapping ${_supabaseMessages.length} supabase messages...',
         );
-      }).toList();
+        final currentUserId = chatService.currentUserId;
+        // Mesajları created_at'e göre sırala (eski -> yeni)
+        final sortedMessages =
+            List<Map<String, dynamic>>.from(_supabaseMessages)..sort((a, b) {
+              final aTime =
+                  DateTime.tryParse(a['created_at'] ?? '') ?? DateTime.now();
+              final bTime =
+                  DateTime.tryParse(b['created_at'] ?? '') ?? DateTime.now();
+              return aTime.compareTo(bTime);
+            });
+
+        try {
+          _cachedMessages = sortedMessages.map((m) {
+            final senderId = m['sender_id'] ?? '';
+            final messageId = m['id'] ?? '';
+            final isMe = senderId == currentUserId;
+
+            MessageStatus status = MessageStatus.sent;
+            if (isMe) {
+              status = _messageStatusCache[messageId] ?? MessageStatus.sent;
+            }
+
+            final typeStr = m['type'] as String?;
+            final type = Message.parseType(typeStr);
+
+            Map<String, dynamic>? metadata;
+            if (m['metadata'] is Map) {
+              metadata = Map<String, dynamic>.from(m['metadata'] as Map);
+            }
+
+            return Message(
+              id: messageId,
+              chatId: m['chat_id'] ?? _chat.id,
+              senderId: isMe ? 'me' : senderId,
+              text: m['content'] ?? '',
+              createdAt:
+                  DateTime.tryParse(m['created_at'] ?? '') ?? DateTime.now(),
+              status: status,
+              type: type,
+              mediaUrl: m['media_url'] as String?,
+              metadata: metadata,
+              isStarred: (m['starred_messages'] as List?)?.isNotEmpty ?? false,
+            );
+          }).toList();
+
+          debugPrint(
+            'ChatDetailPage: Successfully mapped ${_cachedMessages!.length} messages',
+          );
+          return _cachedMessages!;
+        } catch (mapError) {
+          debugPrint('ChatDetailPage: ERROR during message mapping: $mapError');
+          // Hata durumunda boş değil, yarıda kesilmiş listeyi veya logu döndür
+          return [];
+        }
+      }
+      debugPrint('ChatDetailPage: _supabaseMessages is empty');
+      return [];
     }
     return messageStore.getMessages(_chat.id);
   }
@@ -191,7 +208,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _loadSavedWallpaper() async {
     if (_wallpaperLoaded) return;
     _wallpaperLoaded = true;
-    
+
     final saved = await WallpaperService.instance.getWallpaper(_chat.id);
     if (saved != null && mounted) {
       setState(() => _wallpaperId = saved);
@@ -206,7 +223,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       debugPrint('ChatService: User not logged in, using mock data');
       return;
     }
-    
+
     // Chat ID'yi sonra alacağız (didChangeDependencies'de)
     // Bu metod didChangeDependencies sonrası tekrar çağrılacak
   }
@@ -236,7 +253,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   /// Supabase mesajlarını yükle ve dinle
   Future<void> _loadSupabaseMessages() async {
     if (chatService.currentUserId == null || _supabaseInitialized) return;
-    
+
     try {
       _supabaseInitialized = true;
       // Supabase chat bilgisini al (isim, online durumu vs.)
@@ -245,37 +262,41 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         orElse: () => <String, dynamic>{},
       );
       if (_supabaseChat?.isEmpty ?? true) _supabaseChat = null;
-      
+
       // Mesajları yükle
       await chatService.loadMessages(_chat.id);
       _supabaseMessages = chatService.getMessages(_chat.id);
+      _cachedMessages = null; // Önbelleği temizle
       _useSupabase = true;
-      
+
       // Grup sohbetiyse üyeleri yükle
       if (_supabaseChat?['is_group'] == true) {
         _loadChatMembersIfNeeded();
       }
-      
+
       // Yıldızlı mesajları yükle
       _loadStarredMessageIds();
-      
+
       // Realtime subscription - yeni mesajları dinle
-      _messagesChannel = chatService.subscribeToMessages(_chat.id, (newMessage) {
+      _messagesChannel = chatService.subscribeToMessages(_chat.id, (
+        newMessage,
+      ) {
         debugPrint('ChatDetailPage: New message received');
         final messageId = newMessage['id'] as String?;
         final senderId = newMessage['sender_id'] as String?;
-        
+
         // Gelen mesajı hemen read olarak işaretle (chat açık olduğu için)
         if (messageId != null && senderId != chatService.currentUserId) {
           chatService.markMessageAsRead(messageId);
         }
-        
+
         setState(() {
+          _cachedMessages = null; // Önbelleği geçersiz kıl
           _supabaseMessages = chatService.getMessages(_chat.id);
         });
         _scrollToBottom();
       });
-      
+
       // Typing indicator subscription
       _typingChannel = chatService.subscribeToTyping(_chat.id, (userId) {
         if (mounted) {
@@ -286,26 +307,34 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           });
         }
       });
-      
+
       // Chat'i okundu olarak işaretle (tüm mesajları read yap)
       _markAllMessagesAsRead();
-      
+
       // Gizlilik ayarlarını kontrol et (birebir sohbet için)
       if (!_isGroupChat) {
-        _checkPrivacySettings();
+        await _checkPrivacySettings(); // await eklendi - race condition fix
         // Online durumu takibini başlat
         _initPresence();
       }
-      
-      // Kendi mesajlarımın durumlarını yükle
-      _loadMyMessageStatuses();
-      
+
+      // Kendi mesajlarımın durumlarını yükle (gizlilik ayarları yüklendikten sonra)
+      await _loadMyMessageStatuses();
+
+      // Mesaj tepkilerini dinle
+      _subscribeToReactions();
+
       if (mounted) {
-        setState(() {});
+        setState(() {
+          _cachedMessages = null;
+          _supabaseMessages = chatService.getMessages(_chat.id);
+        });
         _scrollToBottom(jump: true);
       }
-      
-      debugPrint('ChatDetailPage: Loaded ${_supabaseMessages.length} messages from Supabase');
+
+      debugPrint(
+        'ChatDetailPage: Loaded ${_supabaseMessages.length} messages from Supabase',
+      );
     } catch (e) {
       debugPrint('ChatDetailPage: Error loading Supabase messages: $e');
       // Mock data'ya devam et
@@ -321,30 +350,37 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     chatService.clearUnreadCount(_chat.id);
   }
 
-  /// Gizlilik ayarlarını kontrol et (last seen ve read receipts)
+  /// Gizlilik ayarlarını kontrol et (last seen, profile photo ve read receipts)
   Future<void> _checkPrivacySettings() async {
     if (_isGroupChat || _supabaseChat == null) return;
-    
+
     final otherUser = chatService.getOtherUser(_supabaseChat!);
     if (otherUser == null) return;
-    
+
     final otherUserId = otherUser['id'] as String?;
     if (otherUserId == null) return;
-    
+
     try {
       // Last seen gizlilik kontrolü
       final canSeeLastSeen = await chatService.canSeeLastSeen(otherUserId);
+      // Profile photo gizlilik kontrolü
+      final canSeeProfilePhoto = await chatService.canSeeProfilePhoto(otherUserId);
       // Read receipts gizlilik kontrolü
-      final canSeeReadReceipts = await chatService.canSeeReadReceipts(otherUserId);
-      
+      final canSeeReadReceipts = await chatService.canSeeReadReceipts(
+        otherUserId,
+      );
+
       if (mounted) {
         setState(() {
           _canSeeLastSeen = canSeeLastSeen;
+          _canSeeProfilePhoto = canSeeProfilePhoto;
           _canSeeReadReceipts = canSeeReadReceipts;
         });
       }
-      
-      debugPrint('Privacy: canSeeLastSeen=$canSeeLastSeen, canSeeReadReceipts=$canSeeReadReceipts');
+
+      debugPrint(
+        'Privacy: canSeeLastSeen=$canSeeLastSeen, canSeeProfilePhoto=$canSeeProfilePhoto, canSeeReadReceipts=$canSeeReadReceipts',
+      );
     } catch (e) {
       debugPrint('Error checking privacy settings: $e');
     }
@@ -361,7 +397,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     for (final msg in _supabaseMessages) {
       final senderId = msg['sender_id'] as String?;
       final messageId = msg['id'] as String?;
-      
+
       // Sadece kendi mesajlarım için durum kontrolü
       if (senderId == currentUserId && messageId != null) {
         // Gizlilik kontrolü - okundu bilgisi kapalıysa sadece sent göster
@@ -369,12 +405,12 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           _messageStatusCache[messageId] = MessageStatus.sent;
           continue;
         }
-        
+
         final statusData = await chatService.getMessageReadStatus(messageId);
-        
+
         // Grup vs bireysel sohbet için farklı mantık
         MessageStatus status = MessageStatus.sent; // tek tik
-        
+
         if (_isGroupChat) {
           // Grup: Tüm üyeler okudu mu kontrol et
           final readCount = statusData['read_count'] as int? ?? 0;
@@ -389,34 +425,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             status = MessageStatus.read;
           }
         }
-        
+
         _messageStatusCache[messageId] = status;
       }
     }
-    
+
     // Mesaj durumu değişikliklerini dinle (realtime)
     _subscribeToMessageStatusChanges();
-    
+
     if (mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() {});
       });
     }
   }
-  
+
   /// Mesaj durumu değişikliklerini realtime dinle
   void _subscribeToMessageStatusChanges() {
     final currentUserId = chatService.currentUserId;
     if (currentUserId == null) return;
-    
-    // Bu chat'teki kendi mesajlarımın ID'lerini al
-    final myMessageIds = _supabaseMessages
-        .where((m) => m['sender_id'] == currentUserId)
-        .map((m) => m['id'] as String)
-        .toList();
-    
-    if (myMessageIds.isEmpty) return;
-    
+
     _messageStatusChannel = Supabase.instance.client
         .channel('message_status_${_chat.id}')
         .onPostgresChanges(
@@ -424,31 +452,70 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           schema: 'public',
           table: 'message_status',
           callback: (payload) {
-            debugPrint('ChatDetailPage: Message status changed: ${payload.newRecord}');
             final messageId = payload.newRecord['message_id'] as String?;
             final readAt = payload.newRecord['read_at'];
             final deliveredAt = payload.newRecord['delivered_at'];
-            
-            if (messageId != null && myMessageIds.contains(messageId)) {
-              MessageStatus newStatus = MessageStatus.sent;
-              if (readAt != null) {
-                newStatus = MessageStatus.read;
-              } else if (deliveredAt != null) {
-                newStatus = MessageStatus.delivered;
-              }
-              
-              if (mounted) {
-                setState(() {
-                  _messageStatusCache[messageId] = newStatus;
-                });
-                debugPrint('ChatDetailPage: Updated status for $messageId to $newStatus');
+
+            if (messageId != null) {
+              // Bu mesajın bu chat'teki kendi mesajlarımdan biri olup olmadığını kontrol et
+              final isMyMessageInThisChat = _supabaseMessages.any(
+                (m) => m['id'] == messageId && m['sender_id'] == currentUserId,
+              );
+
+              if (isMyMessageInThisChat) {
+                MessageStatus newStatus = MessageStatus.sent;
+                if (readAt != null) {
+                  newStatus = MessageStatus.read;
+                } else if (deliveredAt != null) {
+                  newStatus = MessageStatus.delivered;
+                }
+
+                if (mounted) {
+                  setState(() {
+                    _cachedMessages =
+                        null; // Cache'i temizle ki yeni status ile Message objeleri tekrar oluşturulsun
+                    _messageStatusCache[messageId] = newStatus;
+                  });
+                }
               }
             }
           },
         )
         .subscribe();
-    
-    debugPrint('ChatDetailPage: Subscribed to message status changes for ${myMessageIds.length} messages');
+
+    debugPrint(
+      'ChatDetailPage: Subscribed to message status changes for ${_chat.id}',
+    );
+  }
+
+  /// Mesaj tepkilerini realtime dinle
+  void _subscribeToReactions() {
+    if (chatService.currentUserId == null) return;
+
+    _reactionsChannel = Supabase.instance.client
+        .channel('reactions_${_chat.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'message_reactions',
+          callback: (payload) async {
+            debugPrint(
+              'ChatDetailPage: Reaction changed: ${payload.eventType}',
+            );
+            // Tepki değiştiğinde mesajları yeniden yükle (en güvenlisi)
+            // İleride mesaj listesini yerel olarak güncelleyen daha optimize bir yöntem eklenebilir
+            if (mounted) {
+              await chatService.loadMessages(_chat.id);
+              setState(() {
+                _cachedMessages = null; // Invalidate cache
+                _supabaseMessages = chatService.getMessages(_chat.id);
+              });
+            }
+          },
+        )
+        .subscribe();
+
+    debugPrint('ChatDetailPage: Subscribed to reactions');
   }
 
   /// URL detection and preview loading
@@ -465,11 +532,12 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         _lastDetectedUrl = null;
       });
     }
-    
+
     // Typing indicator gönder (her 2 saniyede bir)
     if (text.isNotEmpty && _useSupabase) {
       final now = DateTime.now();
-      if (_lastTypingSent == null || now.difference(_lastTypingSent!).inSeconds >= 2) {
+      if (_lastTypingSent == null ||
+          now.difference(_lastTypingSent!).inSeconds >= 2) {
         _lastTypingSent = now;
         chatService.sendTypingIndicator(_chat.id);
       }
@@ -500,13 +568,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (atIndex >= 0) {
       // @ ile cursor arası query
       final query = text.substring(atIndex + 1, cursorPosition);
-      
+
       // @ yeni mi yazıldı yoksa devam mı ediyor
       if (_mentionStartIndex != atIndex) {
         _mentionStartIndex = atIndex;
         _loadChatMembersIfNeeded();
       }
-      
+
       // Filtreleme
       _filterMentionSuggestions(query);
     } else {
@@ -523,7 +591,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   /// Grup üyelerini yükle (lazy loading)
   Future<void> _loadChatMembersIfNeeded() async {
     if (_chatMembers.isNotEmpty) return;
-    
+
     final members = await chatService.getGroupMembers(_chat.id);
     debugPrint('ChatDetailPage: Loaded ${members.length} group members');
     if (mounted) {
@@ -543,7 +611,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         return profile?['full_name'] ?? profile?['username'] ?? 'Kullanıcı';
       }
     }
-    
+
     // Supabase mesajlarından sender bilgisi al
     for (final msg in _supabaseMessages) {
       if (msg['sender_id'] == senderId) {
@@ -553,7 +621,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         }
       }
     }
-    
+
     return null;
   }
 
@@ -574,15 +642,15 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   void _filterMentionSuggestions(String query) {
     final currentUserId = chatService.currentUserId;
     final lowerQuery = query.toLowerCase();
-    
+
     final filtered = _chatMembers.where((member) {
       final userId = member['user_id'] as String?;
       if (userId == currentUserId) return false; // Kendini hariç tut
-      
+
       final profile = member['profiles'] as Map<String, dynamic>?;
       final username = (profile?['username'] ?? '').toString().toLowerCase();
       final fullName = (profile?['full_name'] ?? '').toString().toLowerCase();
-      
+
       if (query.isEmpty) return true;
       return username.contains(lowerQuery) || fullName.contains(lowerQuery);
     }).toList();
@@ -597,18 +665,22 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   void _onMentionSelected(Map<String, dynamic> member) {
     final profile = member['profiles'] as Map<String, dynamic>?;
     final username = profile?['username'] ?? '';
-    
+
     final text = _controller.text;
     final cursorPosition = _controller.selection.baseOffset;
-    
+
     // @query kısmını @username ile değiştir
     final beforeMention = text.substring(0, _mentionStartIndex);
-    final afterCursor = cursorPosition < text.length ? text.substring(cursorPosition) : '';
-    
+    final afterCursor = cursorPosition < text.length
+        ? text.substring(cursorPosition)
+        : '';
+
     final newText = '$beforeMention@$username $afterCursor';
     _controller.value = TextEditingValue(
       text: newText,
-      selection: TextSelection.collapsed(offset: beforeMention.length + (username as String).length + 2),
+      selection: TextSelection.collapsed(
+        offset: beforeMention.length + (username as String).length + 2,
+      ),
     );
 
     setState(() {
@@ -690,7 +762,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
     // Supabase mesajlarını yükle
     _loadSupabaseMessages();
-    
+
     // Kayıtlı duvar kağıdını yükle
     _loadSavedWallpaper();
   }
@@ -700,6 +772,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     store.setActiveChat(null);
     _messagesChannel?.unsubscribe();
     _messageStatusChannel?.unsubscribe();
+    _reactionsChannel?.unsubscribe();
     _typingChannel?.unsubscribe();
     _presenceSubscription?.cancel();
     _controller.removeListener(_onTextChanged);
@@ -707,15 +780,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _scrollController.dispose();
     super.dispose();
   }
-  
+
   void _initPresence() {
-    if (_supabaseChat == null || _isGroupChat) return;
-    
-    final otherUser = chatService.getOtherUser(_supabaseChat!);
-    if (otherUser == null) return;
-    
-    final otherUserId = otherUser['id'] as String?;
+    if (_isGroupChat) return;
+
+    // Supabase chat henüz yüklenmediyse bile _chat.userId ile dene
+    String? otherUserId;
+
+    if (_supabaseChat != null) {
+      final otherUser = chatService.getOtherUser(_supabaseChat!);
+      otherUserId = otherUser?['id'] as String?;
+    } else {
+      // ChatPreview'dan id al (eğer supabase chat henüz yoksa)
+      // ChatPreview'da userId diğer kullanıcının ID'si oluyor (otherUserId)
+      otherUserId = _chat.otherUserId;
+    }
+
     if (otherUserId == null) return;
+
+    debugPrint('ChatDetailPage: Subscribing to presence for $otherUserId');
 
     // Start subscription
     _presenceSubscription?.cancel();
@@ -769,8 +852,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
   }
 
-
-
   void _simulateIncomingMessage({required String text}) {
     store.simulateIncoming(chatId: _chat.id, replyText: text);
 
@@ -818,7 +899,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
     // Mesajı Hive'a kaydet
     messageStore.addMessage(sendingMsg);
-    
+
     setState(() {
       _replyTo = null;
       // Clear link preview after sending
@@ -864,16 +945,16 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _sendSupabaseMessage(String content) async {
     _controller.clear();
     FocusScope.of(context).unfocus();
-    
+
     // Efekti kaydet ve sıfırla
     final effect = _selectedEffect;
-    
+
     // Mention'ları parse et (grup sohbetlerinde)
     List<Map<String, dynamic>>? mentions;
     if (_isGroupChat && _chatMembers.isNotEmpty) {
       mentions = ChatService.parseMentions(content, _chatMembers);
     }
-    
+
     setState(() {
       _replyTo = null;
       _inputLinkPreview = null;
@@ -892,8 +973,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     );
 
     if (success) {
-      debugPrint('ChatDetailPage: Message sent to Supabase${effect != MessageEffect.none ? ' with ${effect.label} effect' : ''}');
-      
+      debugPrint(
+        'ChatDetailPage: Message sent to Supabase${effect != MessageEffect.none ? ' with ${effect.label} effect' : ''}',
+      );
+
+      // Anlık güncelleme için cache temizle ve veriyi al
+      if (mounted) {
+        setState(() {
+          _cachedMessages = null;
+          _supabaseMessages = chatService.getMessages(_chat.id);
+        });
+      }
+
       // Efekt varsa overlay göster
       if (effect != MessageEffect.none) {
         _playMessageEffect(effect);
@@ -1014,7 +1105,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           onWallpaperChanged: (wallpaper) async {
             // Duvar kağıdını kaydet
             await WallpaperService.instance.saveWallpaper(_chat.id, wallpaper);
-            
+
             setState(() {
               _wallpaperId = wallpaper;
             });
@@ -1082,33 +1173,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
-  /// Kameradan video çek (4.2)
-  Future<void> _recordVideo() async {
-    try {
-      final video = await _picker.pickVideo(
-        source: ImageSource.camera,
-        maxDuration: const Duration(minutes: 2),
-      );
-      if (video != null) {
-        await _sendVideoToSupabase(video);
-      }
-    } catch (e) {
-      _toast('Video kaydedilemedi');
-      debugPrint('Video record error: $e');
-    }
-  }
+  // NOT: _recordVideo metodu kaldırıldı, video çekimi _pickVideo ile ImageSource.camera ile yapılabilir
 
   /// Fotoğrafı Supabase'e gönder (4.1)
   Future<void> _sendPhotoToSupabase(XFile image) async {
     if (_isUploadingMedia) return;
-    
+
     setState(() => _isUploadingMedia = true);
     _toast('Fotoğraf gönderiliyor...');
 
     try {
       final bytes = await image.readAsBytes();
-      final fileName = image.name.isNotEmpty ? image.name : 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      
+      final fileName = image.name.isNotEmpty
+          ? image.name
+          : 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
       final success = await chatService.sendPhoto(
         chatId: _chat.id,
         fileBytes: bytes,
@@ -1131,14 +1210,16 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   /// Videoyu Supabase'e gönder (4.2)
   Future<void> _sendVideoToSupabase(XFile video) async {
     if (_isUploadingMedia) return;
-    
+
     setState(() => _isUploadingMedia = true);
     _toast('Video gönderiliyor...');
 
     try {
       final bytes = await video.readAsBytes();
-      final fileName = video.name.isNotEmpty ? video.name : 'video_${DateTime.now().millisecondsSinceEpoch}.mp4';
-      
+      final fileName = video.name.isNotEmpty
+          ? video.name
+          : 'video_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
       // Video boyut kontrolü (max 50MB)
       if (bytes.length > 50 * 1024 * 1024) {
         _toast('Video çok büyük (max 50MB)');
@@ -1175,7 +1256,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        
+
         if (file.bytes == null) {
           _toast('Dosya okunamadı');
           return;
@@ -1198,7 +1279,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   /// Dosyayı Supabase'e gönder (4.4)
   Future<void> _sendFileToSupabase(PlatformFile file) async {
     if (_isUploadingMedia || file.bytes == null) return;
-    
+
     setState(() => _isUploadingMedia = true);
     _toast('Dosya gönderiliyor...');
 
@@ -1214,7 +1295,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         debugPrint('ChatDetailPage: File sent: ${file.name}');
       } else {
         _toast('Dosya gönderilemedi');
-  }
+      }
     } catch (e) {
       _toast('Dosya yüklenirken hata oluştu');
       debugPrint('File upload error: $e');
@@ -1234,9 +1315,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         );
         if (!success) _toast('GIF gönderilemedi');
       } else {
-      _sendMediaMessage('🎬 GIF gönderildi');
+        _sendMediaMessage('🎬 GIF gönderildi');
+      }
     }
-  }
   }
 
   /// Konum paylaş (4.9 - Gerçek implementasyon)
@@ -1255,7 +1336,10 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       }
 
       if (permission == LocationPermission.deniedForever) {
-        _toast('Konum izni kalıcı olarak reddedildi. Ayarlardan izin verin.', isError: true);
+        _toast(
+          'Konum izni kalıcı olarak reddedildi. Ayarlardan izin verin.',
+          isError: true,
+        );
         return;
       }
 
@@ -1268,7 +1352,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       // Konumu al
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       );
 
       // Adresi çözümle
@@ -1289,7 +1375,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         }
       } catch (_) {
         // Adres çözümlenemezse koordinatları göster
-        address = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+        address =
+            '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
       }
 
       // Konumu gönder
@@ -1323,7 +1410,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       // Rehberden kişi seç
       final contact = await FlutterContacts.openExternalPick();
-      
+
       if (contact == null) return;
 
       // Telefon numarasını al
@@ -1341,7 +1428,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         );
         if (!success) {
           _toast('Kişi gönderilemedi', isError: true);
-  }
+        }
       } else {
         _sendMediaMessage('👤 Kişi paylaşıldı: ${contact.displayName}');
       }
@@ -1351,54 +1438,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
-  /// Fallback - modal ile kişi seçimi (API erişimi yoksa)
-  void _shareContactModal() {
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) {
-        return Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Kişi Seç',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 16),
-              ...['Ahmet Yılmaz', 'Ayşe Demir', 'Mehmet Kaya'].map(
-                (name) => ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: NearTheme.primary,
-                    child: Text(
-                      name[0],
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                  title: Text(name),
-                  subtitle: const Text('+90 5XX XXX XX XX'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    if (_useSupabase) {
-                      chatService.sendContact(
-                        chatId: _chat.id,
-                        contactName: name,
-                        contactPhone: '+90 5XX XXX XX XX',
-                      );
-                    } else {
-                    _sendMediaMessage('👤 Kişi paylaşıldı: $name');
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  // NOT: _shareContactModal metodu kaldırıldı, flutter_contacts kullanılıyor
 
   void _sendMediaMessage(String text) {
     final msg = Message(
@@ -1473,7 +1513,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   void _onEmojiSelected(String emoji) {
     final text = _controller.text;
     final selection = _controller.selection;
-    
+
     // Selection geçerli değilse (cursor yok), sona ekle
     if (!selection.isValid || selection.start < 0) {
       _controller.text = text + emoji;
@@ -1482,7 +1522,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
       return;
     }
-    
+
     final newText = text.replaceRange(selection.start, selection.end, emoji);
     _controller.value = TextEditingValue(
       text: newText,
@@ -1498,7 +1538,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Future<void> _startVoiceRecording() async {
     final started = await _audioService.startRecording();
     if (started) {
-    setState(() => _isRecordingVoice = true);
+      setState(() => _isRecordingVoice = true);
     } else {
       _toast('Mikrofon izni gerekli');
     }
@@ -1513,10 +1553,10 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   /// Sesli mesaj gönder (4.3 - Gerçek implementasyon)
   Future<void> _sendVoiceMessage(Duration duration) async {
     setState(() => _isRecordingVoice = false);
-    
+
     // Kaydı durdur ve dosyayı al
     final audioFile = await _audioService.stopRecording();
-    
+
     if (audioFile == null) {
       _toast('Ses kaydı alınamadı');
       return;
@@ -1528,7 +1568,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       try {
         final bytes = await audioFile.readAsBytes();
-        
+
         final success = await chatService.sendVoiceMessage(
           chatId: _chat.id,
           audioBytes: bytes,
@@ -1536,7 +1576,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         );
 
         if (success) {
-          debugPrint('ChatDetailPage: Voice message sent (${duration.inSeconds}s)');
+          debugPrint(
+            'ChatDetailPage: Voice message sent (${duration.inSeconds}s)',
+          );
         } else {
           _toast('Sesli mesaj gönderilemedi');
         }
@@ -1551,7 +1593,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         if (mounted) setState(() => _isUploadingMedia = false);
       }
     } else {
-    _toast('Sesli mesaj gönderildi (${duration.inSeconds}s)');
+      _toast('Sesli mesaj gönderildi (${duration.inSeconds}s)');
     }
   }
 
@@ -1562,12 +1604,23 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         messageId: m.id,
         emoji: emoji,
       );
-      
+
       if (success) {
         HapticFeedback.lightImpact();
+        // Anlık güncelleme için mesajları reload et
+        await chatService.loadMessages(_chat.id);
+        if (mounted) {
+          setState(() {
+            _cachedMessages = null;
+            _supabaseMessages = chatService.getMessages(_chat.id);
+          });
+        }
+      } else {
+        _toast('Reaksiyon eklenemedi (Tablo hatası olabilir)', isError: true);
       }
     } catch (e) {
-      debugPrint('Error adding reaction: $e');
+      debugPrint('ChatDetailPage: Error adding reaction: $e');
+      _toast('Hata: $e', isError: true);
     }
   }
 
@@ -1621,14 +1674,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF3A3A3C) : Colors.grey.shade200,
+                      color: isDark
+                          ? const Color(0xFF3A3A3C)
+                          : Colors.grey.shade200,
                       borderRadius: BorderRadius.circular(24),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: ['❤️', '👍', '😂', '😮', '😢', '🙏'].map((emoji) {
+                      children: ['❤️', '👍', '😂', '😮', '😢', '🙏'].map((
+                        emoji,
+                      ) {
                         return GestureDetector(
                           onTap: () {
                             Navigator.pop(context);
@@ -1755,12 +1815,12 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         break;
     }
   }
-  
+
   /// Mesaj düzenleme dialogu
   void _showEditMessageDialog(Message m) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final editController = TextEditingController(text: m.text);
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1777,7 +1837,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           style: TextStyle(color: isDark ? Colors.white : Colors.black87),
           decoration: InputDecoration(
             hintText: 'Mesaj...',
-            hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black38),
+            hintStyle: TextStyle(
+              color: isDark ? Colors.white38 : Colors.black38,
+            ),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
@@ -1791,7 +1853,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               final newText = editController.text.trim();
               if (newText.isNotEmpty && newText != m.text) {
                 Navigator.pop(context);
-                
+
                 if (_useSupabase) {
                   final success = await chatService.editMessage(m.id, newText);
                   if (success) {
@@ -1821,11 +1883,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       ),
     );
   }
-  
+
   /// Mesaj silme onayı
   void _showDeleteConfirmation(Message m) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1846,7 +1908,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              
+
               if (_useSupabase) {
                 final success = await chatService.deleteMessage(m.id);
                 if (success) {
@@ -1876,9 +1938,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (_isGroupChat) {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => GroupInfoPage(groupId: _chat.id),
-        ),
+        MaterialPageRoute(builder: (_) => GroupInfoPage(groupId: _chat.id)),
       ).then((_) {
         // GroupInfoPage'den döndükten sonra wallpaper'ı yeniden yükle
         _wallpaperLoaded = false;
@@ -1886,7 +1946,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       });
       return;
     }
-    
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cs = Theme.of(context).colorScheme;
     final presence = store.presenceOf(_chat.userId);
@@ -2050,28 +2110,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return ListenableBuilder(
-      listenable: store,
+      listenable: Listenable.merge([store, chatService]),
       builder: (context, _) {
         final presence = store.presenceOf(_chat.userId);
         final typing = store.isTyping(_chat.id) || _isOtherUserTyping;
-        
+
         // Grup için online durumu gösterme
-        final isOnline = _isGroupChat ? false : presence.online;
+        final isOnline = _isGroupChat ? false : (presence.online && _canSeeLastSeen);
 
         // Grup için üye sayısı, bireysel sohbet için online durumu
         String subtitle;
         if (_isGroupChat) {
           final memberCount = _chatMembers.length;
-          subtitle = typing 
+          subtitle = typing
               ? 'birisi yazıyor...'
               : (memberCount > 0 ? '$memberCount üye' : 'Yükleniyor...');
         } else {
-          subtitle = typing
-              ? 'yazıyor...'
-              : (presence.online
-                  ? 'Çevrimiçi'
-                  : chatService.formatLastSeen(presence.lastSeenAt));
-          
+          // Son görülme gizlilik kontrolü
+          if (!_canSeeLastSeen) {
+            subtitle = typing ? 'yazıyor...' : '';
+          } else {
+            subtitle = typing
+                ? 'yazıyor...'
+                : (presence.online
+                      ? 'Çevrimiçi'
+                      : chatService.formatLastSeen(presence.lastSeenAt));
+          }
+
           if (subtitle.isEmpty) subtitle = ''; // Boş ise boş
         }
 
@@ -2099,19 +2164,22 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundColor: _isGroupChat 
+                        backgroundColor: _isGroupChat
                             ? NearTheme.primary.withAlpha(30)
                             : (isDark ? Colors.white12 : Colors.grey.shade300),
-                        backgroundImage: _supabaseChat?['avatar_url'] != null 
-                            ? NetworkImage(_supabaseChat!['avatar_url']) 
+                        // Profil fotoğrafı gizlilik kontrolü
+                        backgroundImage: (_canSeeProfilePhoto && _supabaseChat?['avatar_url'] != null)
+                            ? NetworkImage(_supabaseChat!['avatar_url'])
                             : null,
-                        child: _supabaseChat?['avatar_url'] == null
+                        child: (!_canSeeProfilePhoto || _supabaseChat?['avatar_url'] == null)
                             ? Icon(
                                 _isGroupChat ? Icons.group : Icons.person,
                                 size: 22,
-                                color: _isGroupChat 
-                                    ? NearTheme.primary 
-                                    : (isDark ? Colors.white54 : Colors.grey.shade600),
+                                color: _isGroupChat
+                                    ? NearTheme.primary
+                                    : (isDark
+                                          ? Colors.white54
+                                          : Colors.grey.shade600),
                               )
                             : null,
                       ),
@@ -2203,329 +2271,350 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           body: Stack(
             children: [
               ChatWallpaper(
-            wallpaperId: _wallpaperId,
-            child: Column(
-              children: [
-                // Messages
-                Expanded(
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                    itemCount: _messages.length + 1,
-                    itemBuilder: (context, i) {
-                      if (i == 0) return _DayChip(text: 'Bugün');
-                      final m = _messages[i - 1];
-                      
-                      // Grup sohbetinde sender name bul
-                      String? senderName;
-                      if (_isGroupChat && !m.isMe) {
-                        senderName = _getSenderNameForMessage(m.senderId);
-                      }
-                      
-                      // Reactions bul
-                      final reactions = _getReactionsForMessage(m.id);
-                      
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: _SwipeableMessageBubble(
-                          message: m,
-                          starred: _starredMessageIds.contains(m.id),
-                          onLongPress: () => _onMessageLongPress(m),
-                          onReply: () => setState(() => _replyTo = m),
-                          onReact: (emoji) => _addReaction(m, emoji),
-                          isGroupChat: _isGroupChat,
-                          senderName: senderName,
-                          reactions: reactions,
-                        ),
-                      );
-                    },
-                  ),
-                ),
+                wallpaperId: _wallpaperId,
+                child: Column(
+                  children: [
+                    // Messages
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                        itemCount: _messages.length + 1,
+                        itemBuilder: (context, i) {
+                          if (i == 0) return _DayChip(text: 'Bugün');
+                          final m = _messages[i - 1];
 
-                // Reply bar
-                if (_replyTo != null)
-                  Container(
-                    color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                    padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF2C2C2E)
-                            : Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border(
-                          left: BorderSide(color: NearTheme.primary, width: 4),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _replyTo!.isMe ? 'Sen' : _chat.name,
-                                  style: TextStyle(
-                                    color: NearTheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                Text(
-                                  _replyTo!.text,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isDark
-                                        ? Colors.white54
-                                        : Colors.black54,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ],
+                          // Grup sohbetinde sender name bul
+                          String? senderName;
+                          if (_isGroupChat && !m.isMe) {
+                            senderName = _getSenderNameForMessage(m.senderId);
+                          }
+
+                          // Reactions bul
+                          final reactions = _getReactionsForMessage(m.id);
+
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: _SwipeableMessageBubble(
+                              message: m,
+                              starred:
+                                  m.isStarred ||
+                                  _starredMessageIds.contains(m.id),
+                              onLongPress: () => _onMessageLongPress(m),
+                              onReply: () => setState(() => _replyTo = m),
+                              onReact: (emoji) => _addReaction(m, emoji),
+                              isGroupChat: _isGroupChat,
+                              senderName: senderName,
+                              reactions: reactions,
                             ),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              Icons.close,
-                              size: 20,
-                              color: isDark ? Colors.white54 : Colors.black54,
-                            ),
-                            onPressed: () => setState(() => _replyTo = null),
-                          ),
-                        ],
+                          );
+                        },
                       ),
                     ),
-                  ),
 
-                // Voice recorder overlay
-                if (_isRecordingVoice)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: SafeArea(
-                      top: false,
-                      child: VoiceMessageRecorder(
-                        onCancel: _cancelVoiceRecording,
-                        onRecordingComplete: _sendVoiceMessage,
-                      ),
-                    ),
-                  ),
-
-                // @Mention önerileri (input bar üstünde)
-                if (_showMentionSuggestions && _mentionSuggestions.isNotEmpty)
-                  Container(
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      itemCount: _mentionSuggestions.length,
-                      itemBuilder: (context, index) {
-                        final member = _mentionSuggestions[index];
-                        final profile = member['profiles'] as Map<String, dynamic>?;
-                        final username = profile?['username'] ?? '';
-                        final fullName = profile?['full_name'] ?? '';
-                        final avatarUrl = profile?['avatar_url'];
-
-                        return ListTile(
-                          dense: true,
-                          leading: CircleAvatar(
-                            radius: 18,
-                            backgroundColor: NearTheme.primary,
-                            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                            child: avatarUrl == null
-                                ? Text(
-                                    username.isNotEmpty ? username[0].toUpperCase() : '?',
-                                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                                  )
-                                : null,
+                    // Reply bar
+                    if (_replyTo != null)
+                      Container(
+                        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                        padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
                           ),
-                          title: Text(
-                            fullName.isNotEmpty ? fullName : username,
-                            style: TextStyle(
-                              color: isDark ? Colors.white : Colors.black87,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '@$username',
-                            style: TextStyle(
-                              color: NearTheme.primary,
-                              fontSize: 12,
-                            ),
-                          ),
-                          onTap: () => _onMentionSelected(member),
-                        );
-                      },
-                    ),
-                  ),
-
-                // Link preview (above input bar)
-                if (!_isRecordingVoice &&
-                    (_inputLinkPreview != null || _isLoadingLinkPreview))
-                  Container(
-                    color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: InputLinkPreview(
-                      previewData: _inputLinkPreview,
-                      isLoading: _isLoadingLinkPreview,
-                      onRemove: _clearLinkPreview,
-                    ),
-                  ),
-
-                // Input bar (hidden when recording)
-                if (!_isRecordingVoice)
-                  Container(
-                    color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                    child: SafeArea(
-                      top: false,
-                      child: Row(
-                        children: [
-                          // Input field
-                          Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? const Color(0xFF2C2C2E)
-                                    : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(24),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xFF2C2C2E)
+                                : Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border(
+                              left: BorderSide(
+                                color: NearTheme.primary,
+                                width: 4,
                               ),
-                              child: Row(
-                                children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      _showEmojiPicker
-                                          ? Icons.keyboard
-                                          : Icons.emoji_emotions_outlined,
-                                      color: isDark
-                                          ? Colors.white54
-                                          : Colors.black54,
-                                    ),
-                                    onPressed: _toggleEmojiPicker,
-                                  ),
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _controller,
-                                      textInputAction: TextInputAction.send,
-                                      onSubmitted: (_) => _send(),
-                                      onTap: () {
-                                        if (_showEmojiPicker) {
-                                          setState(
-                                            () => _showEmojiPicker = false,
-                                          );
-                                        }
-                                      },
-                                      style: TextStyle(color: cs.onSurface),
-                                      decoration: InputDecoration(
-                                        hintText: 'Mesaj',
-                                        hintStyle: TextStyle(
-                                          color: isDark
-                                              ? Colors.white38
-                                              : Colors.black38,
-                                        ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 10,
-                                            ),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _replyTo!.isMe ? 'Sen' : _chat.name,
+                                      style: TextStyle(
+                                        color: NearTheme.primary,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
                                       ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.attach_file_rounded,
-                                      color: isDark
-                                          ? Colors.white54
-                                          : Colors.black54,
+                                    Text(
+                                      _replyTo!.text,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: isDark
+                                            ? Colors.white54
+                                            : Colors.black54,
+                                        fontSize: 14,
+                                      ),
                                     ),
-                                    onPressed: () => _showAttachmentOptions(),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.camera_alt_rounded,
-                                      color: isDark
-                                          ? Colors.white54
-                                          : Colors.black54,
-                                    ),
-                                    onPressed: _pickFromCamera,
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.close,
+                                  size: 20,
+                                  color: isDark
+                                      ? Colors.white54
+                                      : Colors.black54,
+                                ),
+                                onPressed: () =>
+                                    setState(() => _replyTo = null),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 4),
-                          // ✨ Effect Button (Premium)
-                          EffectButton(
-                            currentEffect: _selectedEffect,
-                            onTap: _showEffectPicker,
+                        ),
+                      ),
+
+                    // Voice recorder overlay
+                    if (_isRecordingVoice)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: SafeArea(
+                          top: false,
+                          child: VoiceMessageRecorder(
+                            onCancel: _cancelVoiceRecording,
+                            onRecordingComplete: _sendVoiceMessage,
                           ),
-                          const SizedBox(width: 4),
-                          // Send/Voice button
-                          GestureDetector(
-                            onTap: _controller.text.isEmpty
-                                ? _startVoiceRecording
-                                : _send,
-                            onLongPress: _controller.text.isEmpty
-                                ? _startVoiceRecording
-                                : null,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: _selectedEffect != MessageEffect.none
-                                    ? _selectedEffect.colors.first
-                                    : NearTheme.primary,
-                                shape: BoxShape.circle,
-                                boxShadow: _selectedEffect != MessageEffect.none
-                                    ? [
-                                        BoxShadow(
-                                          color: _selectedEffect.colors.first.withAlpha(100),
-                                          blurRadius: 8,
-                                          spreadRadius: 2,
+                        ),
+                      ),
+
+                    // @Mention önerileri (input bar üstünde)
+                    if (_showMentionSuggestions &&
+                        _mentionSuggestions.isNotEmpty)
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          padding: EdgeInsets.zero,
+                          itemCount: _mentionSuggestions.length,
+                          itemBuilder: (context, index) {
+                            final member = _mentionSuggestions[index];
+                            final profile =
+                                member['profiles'] as Map<String, dynamic>?;
+                            final username = profile?['username'] ?? '';
+                            final fullName = profile?['full_name'] ?? '';
+                            final avatarUrl = profile?['avatar_url'];
+
+                            return ListTile(
+                              dense: true,
+                              leading: CircleAvatar(
+                                radius: 18,
+                                backgroundColor: NearTheme.primary,
+                                backgroundImage: avatarUrl != null
+                                    ? NetworkImage(avatarUrl)
+                                    : null,
+                                child: avatarUrl == null
+                                    ? Text(
+                                        username.isNotEmpty
+                                            ? username[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
                                         ),
-                                      ]
+                                      )
                                     : null,
                               ),
-                              child: Icon(
-                                _controller.text.isEmpty
-                                    ? Icons.mic_rounded
-                                    : (_selectedEffect != MessageEffect.none
-                                        ? _selectedEffect.icon
-                                        : Icons.send_rounded),
-                                color: Colors.white,
-                                size: 22,
+                              title: Text(
+                                fullName.isNotEmpty ? fullName : username,
+                                style: TextStyle(
+                                  color: isDark ? Colors.white : Colors.black87,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                          ),
-                        ],
+                              subtitle: Text(
+                                '@$username',
+                                style: TextStyle(
+                                  color: NearTheme.primary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              onTap: () => _onMentionSelected(member),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ),
 
-                // Emoji picker
-                if (_showEmojiPicker)
-                  EmojiPickerWidget(
-                    height: 280,
-                    onEmojiSelected: _onEmojiSelected,
-                    onBackspace: () {
-                      if (_controller.text.isNotEmpty) {
-                        _controller.text = _controller.text.substring(
-                          0,
-                          _controller.text.length - 1,
-                        );
-                      }
-                    },
-                  ),
-              ],
-            ),
-          ), // Close ChatWallpaper
+                    // Link preview (above input bar)
+                    if (!_isRecordingVoice &&
+                        (_inputLinkPreview != null || _isLoadingLinkPreview))
+                      Container(
+                        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                        child: InputLinkPreview(
+                          previewData: _inputLinkPreview,
+                          isLoading: _isLoadingLinkPreview,
+                          onRemove: _clearLinkPreview,
+                        ),
+                      ),
 
+                    // Input bar (hidden when recording)
+                    if (!_isRecordingVoice)
+                      Container(
+                        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                        child: SafeArea(
+                          top: false,
+                          child: Row(
+                            children: [
+                              // Input field
+                              Expanded(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFF2C2C2E)
+                                        : Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(
+                                          _showEmojiPicker
+                                              ? Icons.keyboard
+                                              : Icons.emoji_emotions_outlined,
+                                          color: isDark
+                                              ? Colors.white54
+                                              : Colors.black54,
+                                        ),
+                                        onPressed: _toggleEmojiPicker,
+                                      ),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _controller,
+                                          textInputAction: TextInputAction.send,
+                                          onSubmitted: (_) => _send(),
+                                          onTap: () {
+                                            if (_showEmojiPicker) {
+                                              setState(
+                                                () => _showEmojiPicker = false,
+                                              );
+                                            }
+                                          },
+                                          style: TextStyle(color: cs.onSurface),
+                                          decoration: InputDecoration(
+                                            hintText: 'Mesaj',
+                                            hintStyle: TextStyle(
+                                              color: isDark
+                                                  ? Colors.white38
+                                                  : Colors.black38,
+                                            ),
+                                            border: InputBorder.none,
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                  vertical: 10,
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.attach_file_rounded,
+                                          color: isDark
+                                              ? Colors.white54
+                                              : Colors.black54,
+                                        ),
+                                        onPressed: () =>
+                                            _showAttachmentOptions(),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.camera_alt_rounded,
+                                          color: isDark
+                                              ? Colors.white54
+                                              : Colors.black54,
+                                        ),
+                                        onPressed: _pickFromCamera,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              // ✨ Effect Button (Premium)
+                              EffectButton(
+                                currentEffect: _selectedEffect,
+                                onTap: _showEffectPicker,
+                              ),
+                              const SizedBox(width: 4),
+                              // Send/Voice button
+                              GestureDetector(
+                                onTap: _controller.text.isEmpty
+                                    ? _startVoiceRecording
+                                    : _send,
+                                onLongPress: _controller.text.isEmpty
+                                    ? _startVoiceRecording
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: _selectedEffect != MessageEffect.none
+                                        ? _selectedEffect.colors.first
+                                        : NearTheme.primary,
+                                    shape: BoxShape.circle,
+                                    boxShadow:
+                                        _selectedEffect != MessageEffect.none
+                                        ? [
+                                            BoxShadow(
+                                              color: _selectedEffect
+                                                  .colors
+                                                  .first
+                                                  .withAlpha(100),
+                                              blurRadius: 8,
+                                              spreadRadius: 2,
+                                            ),
+                                          ]
+                                        : null,
+                                  ),
+                                  child: Icon(
+                                    _controller.text.isEmpty
+                                        ? Icons.mic_rounded
+                                        : (_selectedEffect != MessageEffect.none
+                                              ? _selectedEffect.icon
+                                              : Icons.send_rounded),
+                                    color: Colors.white,
+                                    size: 22,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                    // Emoji picker
+                    if (_showEmojiPicker)
+                      EmojiPickerWidget(
+                        height: 280,
+                        onEmojiSelected: _onEmojiSelected,
+                        onBackspace: () {
+                          if (_controller.text.isNotEmpty) {
+                            _controller.text = _controller.text.substring(
+                              0,
+                              _controller.text.length - 1,
+                            );
+                          }
+                        },
+                      ),
+                  ],
+                ),
+              ), // Close ChatWallpaper
               // ✨ Message Effect Overlay (Premium)
               if (_showEffectOverlay)
                 Positioned.fill(
@@ -2845,7 +2934,8 @@ class _SwipeableMessageBubble extends StatefulWidget {
   });
 
   @override
-  State<_SwipeableMessageBubble> createState() => _SwipeableMessageBubbleState();
+  State<_SwipeableMessageBubble> createState() =>
+      _SwipeableMessageBubbleState();
 }
 
 class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
@@ -2865,7 +2955,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    
+
     _heartScaleAnimation = TweenSequence<double>([
       TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.2), weight: 40),
       TweenSequenceItem(tween: Tween(begin: 1.2, end: 1.0), weight: 20),
@@ -2902,19 +2992,25 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
     // Sadece sağa kaydırma (reply için)
     final isMe = widget.message.isMe;
-    
+
     if (isMe) {
       // Benim mesajım: sola kaydır
       if (details.delta.dx < 0) {
         setState(() {
-          _dragExtent = (_dragExtent + details.delta.dx).clamp(-_swipeThreshold * 1.5, 0);
+          _dragExtent = (_dragExtent + details.delta.dx).clamp(
+            -_swipeThreshold * 1.5,
+            0,
+          );
         });
       }
     } else {
       // Karşı tarafın mesajı: sağa kaydır
       if (details.delta.dx > 0) {
         setState(() {
-          _dragExtent = (_dragExtent + details.delta.dx).clamp(0, _swipeThreshold * 1.5);
+          _dragExtent = (_dragExtent + details.delta.dx).clamp(
+            0,
+            _swipeThreshold * 1.5,
+          );
         });
       }
     }
@@ -2922,13 +3018,13 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
 
   void _onHorizontalDragEnd(DragEndDetails details) {
     final threshold = widget.message.isMe ? -_swipeThreshold : _swipeThreshold;
-    
+
     if ((widget.message.isMe && _dragExtent <= threshold) ||
         (!widget.message.isMe && _dragExtent >= threshold)) {
       HapticFeedback.mediumImpact();
       widget.onReply();
     }
-    
+
     setState(() => _dragExtent = 0);
   }
 
@@ -2956,7 +3052,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: NearTheme.primary.withOpacity(0.2),
+                      color: NearTheme.primary.withValues(alpha: 0.2),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -2970,7 +3066,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
             ),
           ),
         ),
-        
+
         // Message bubble with gesture
         GestureDetector(
           onDoubleTap: _onDoubleTap,
@@ -2988,7 +3084,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
                   senderName: widget.senderName,
                   reactions: widget.reactions,
                 ),
-                
+
                 // Heart animation overlay
                 if (_showHeartAnimation)
                   Positioned.fill(
@@ -3096,15 +3192,17 @@ class _MessageBubble extends StatelessWidget {
     final theirTextColor = isDark ? Colors.white : Colors.black87;
 
     // Medya tipine göre padding ayarla
-    final isMediaMessage = message.type == MessageType.image || 
-                           message.type == MessageType.video ||
-                           message.type == MessageType.gif;
-    final bubblePadding = isMediaMessage 
+    final isMediaMessage =
+        message.type == MessageType.image ||
+        message.type == MessageType.video ||
+        message.type == MessageType.gif;
+    final bubblePadding = isMediaMessage
         ? const EdgeInsets.all(4.0)
         : const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
 
     // Grup sohbetinde gönderen ismini göster
-    final showSenderName = isGroupChat && !isMe && senderName != null && senderName!.isNotEmpty;
+    final showSenderName =
+        isGroupChat && !isMe && senderName != null && senderName!.isNotEmpty;
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -3133,7 +3231,9 @@ class _MessageBubble extends StatelessWidget {
             ],
           ),
           child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            crossAxisAlignment: isMe
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
             children: [
               // Grup sohbetinde gönderen ismi
               if (showSenderName)
@@ -3148,7 +3248,7 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              
+
               // Starred indicator
               if (starred)
                 Padding(
@@ -3159,10 +3259,16 @@ class _MessageBubble extends StatelessWidget {
                     color: isMe ? Colors.white70 : Colors.amber,
                   ),
                 ),
-              
+
               // Medya içeriği (tip bazlı)
-              _buildMediaContent(context, isDark, isMe, myTextColor, theirTextColor),
-              
+              _buildMediaContent(
+                context,
+                isDark,
+                isMe,
+                myTextColor,
+                theirTextColor,
+              ),
+
               // Caption (medya mesajları için)
               if (isMediaMessage && message.text.isNotEmpty)
                 Padding(
@@ -3175,10 +3281,12 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              
+
               // Time & status
               Padding(
-                padding: isMediaMessage ? const EdgeInsets.all(8) : EdgeInsets.zero,
+                padding: isMediaMessage
+                    ? const EdgeInsets.all(8)
+                    : EdgeInsets.zero,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -3191,6 +3299,16 @@ class _MessageBubble extends StatelessWidget {
                             : (isDark ? Colors.white38 : Colors.black38),
                       ),
                     ),
+                    if (starred) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.star_rounded,
+                        size: 14,
+                        color: isMe
+                            ? Colors.white60
+                            : Colors.amber.withValues(alpha: 0.7),
+                      ),
+                    ],
                     if (isMe) ...[
                       const SizedBox(width: 4),
                       Icon(
@@ -3202,7 +3320,7 @@ class _MessageBubble extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               // Reactions badge
               if (reactions != null && reactions!.isNotEmpty)
                 _buildReactionsBadge(isDark),
@@ -3221,7 +3339,7 @@ class _MessageBubble extends StatelessWidget {
       final emoji = r['emoji'] as String? ?? '❤️';
       emojiCounts[emoji] = (emojiCounts[emoji] ?? 0) + 1;
     }
-    
+
     return Container(
       margin: const EdgeInsets.only(top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -3257,7 +3375,13 @@ class _MessageBubble extends StatelessWidget {
   }
 
   /// Medya tipine göre içerik oluştur
-  Widget _buildMediaContent(BuildContext context, bool isDark, bool isMe, Color myTextColor, Color theirTextColor) {
+  Widget _buildMediaContent(
+    BuildContext context,
+    bool isDark,
+    bool isMe,
+    Color myTextColor,
+    Color theirTextColor,
+  ) {
     switch (message.type) {
       case MessageType.image:
         return _buildImageContent(context);
@@ -3266,53 +3390,82 @@ class _MessageBubble extends StatelessWidget {
       case MessageType.voice:
         return _buildVoiceContent(context, isMe);
       case MessageType.file:
-        return _buildFileContent(context, isDark, isMe, myTextColor, theirTextColor);
+        return _buildFileContent(
+          context,
+          isDark,
+          isMe,
+          myTextColor,
+          theirTextColor,
+        );
       case MessageType.gif:
         return _buildGifContent(context);
       case MessageType.location:
-        return _buildLocationContent(context, isDark, isMe, myTextColor, theirTextColor);
+        return _buildLocationContent(
+          context,
+          isDark,
+          isMe,
+          myTextColor,
+          theirTextColor,
+        );
       case MessageType.contact:
-        return _buildContactContent(context, isDark, isMe, myTextColor, theirTextColor);
+        return _buildContactContent(
+          context,
+          isDark,
+          isMe,
+          myTextColor,
+          theirTextColor,
+        );
       case MessageType.text:
-      default:
-        return _buildTextContent(context, isDark, isMe, myTextColor, theirTextColor);
+        return _buildTextContent(
+          context,
+          isDark,
+          isMe,
+          myTextColor,
+          theirTextColor,
+        );
     }
   }
 
   /// Text mesaj içeriği
-  Widget _buildTextContent(BuildContext context, bool isDark, bool isMe, Color myTextColor, Color theirTextColor) {
+  Widget _buildTextContent(
+    BuildContext context,
+    bool isDark,
+    bool isMe,
+    Color myTextColor,
+    Color theirTextColor,
+  ) {
     final url = LinkDetector.extractFirstUrl(message.text);
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Link preview
         if (url != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: LinkPreviewCard(
-                    url: url,
-                    title: 'Link Önizlemesi',
-                    siteName: Uri.tryParse(url)?.host.replaceFirst('www.', ''),
-                    isCompact: true,
-                    onTap: () => _openUrl(url),
-                  ),
-                ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: LinkPreviewCard(
+              url: url,
+              title: 'Link Önizlemesi',
+              siteName: Uri.tryParse(url)?.host.replaceFirst('www.', ''),
+              isCompact: true,
+              onTap: () => _openUrl(url),
+            ),
+          ),
         // Text
-              LinkifiedText(
-                text: message.text,
-                style: TextStyle(
-                  color: isMe ? myTextColor : theirTextColor,
-                  fontSize: 16,
-                ),
-                linkStyle: TextStyle(
-                  color: isMe ? Colors.white : NearTheme.primary,
-                  fontSize: 16,
-                  decoration: TextDecoration.underline,
-                ),
-                onLinkTap: (link) => _openUrl(link),
-              ),
-              const SizedBox(height: 4),
+        LinkifiedText(
+          text: message.text,
+          style: TextStyle(
+            color: isMe ? myTextColor : theirTextColor,
+            fontSize: 16,
+          ),
+          linkStyle: TextStyle(
+            color: isMe ? Colors.white : NearTheme.primary,
+            fontSize: 16,
+            decoration: TextDecoration.underline,
+          ),
+          onLinkTap: (link) => _openUrl(link),
+        ),
+        const SizedBox(height: 4),
       ],
     );
   }
@@ -3320,11 +3473,14 @@ class _MessageBubble extends StatelessWidget {
   /// Fotoğraf içeriği
   Widget _buildImageContent(BuildContext context) {
     if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
-      return const SizedBox(height: 100, child: Center(child: Icon(Icons.broken_image)));
+      return const SizedBox(
+        height: 100,
+        child: Center(child: Icon(Icons.broken_image)),
+      );
     }
 
     debugPrint('Loading image: ${message.mediaUrl}');
-    
+
     return GestureDetector(
       onTap: () => _openFullScreenImage(context, message.mediaUrl!),
       child: ClipRRect(
@@ -3346,7 +3502,11 @@ class _MessageBubble extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.broken_image, size: 40, color: Colors.grey.shade600),
+                  Icon(
+                    Icons.broken_image,
+                    size: 40,
+                    color: Colors.grey.shade600,
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     'Fotoğraf yüklenemedi',
@@ -3363,7 +3523,8 @@ class _MessageBubble extends StatelessWidget {
               child: Center(
                 child: CircularProgressIndicator(
                   value: progress.expectedTotalBytes != null
-                      ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                      ? progress.cumulativeBytesLoaded /
+                            progress.expectedTotalBytes!
                       : null,
                   color: NearTheme.primary,
                 ),
@@ -3397,7 +3558,7 @@ class _MessageBubble extends StatelessWidget {
   /// Video içeriği
   Widget _buildVideoContent(BuildContext context) {
     final thumbnailUrl = message.metadata?['thumbnail_url'] as String?;
-    
+
     return GestureDetector(
       onTap: () {
         if (message.mediaUrl != null && message.mediaUrl!.isNotEmpty) {
@@ -3415,11 +3576,15 @@ class _MessageBubble extends StatelessWidget {
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: 180,
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (context, error, stackTrace) => Container(
                   height: 180,
                   color: Colors.black54,
                   child: const Center(
-                    child: Icon(Icons.videocam, color: Colors.white38, size: 48),
+                    child: Icon(
+                      Icons.videocam,
+                      color: Colors.white38,
+                      size: 48,
+                    ),
                   ),
                 ),
               )
@@ -3438,7 +3603,11 @@ class _MessageBubble extends StatelessWidget {
                 color: Colors.black.withAlpha(100),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 32,
+              ),
             ),
             // Süre göstergesi
             if (message.metadata?['duration_ms'] != null)
@@ -3446,13 +3615,20 @@ class _MessageBubble extends StatelessWidget {
                 bottom: 8,
                 right: 8,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    _formatDuration(Duration(milliseconds: message.metadata!['duration_ms'] as int)),
+                    _formatDuration(
+                      Duration(
+                        milliseconds: message.metadata!['duration_ms'] as int,
+                      ),
+                    ),
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ),
@@ -3475,7 +3651,7 @@ class _MessageBubble extends StatelessWidget {
   /// Sesli mesaj içeriği
   Widget _buildVoiceContent(BuildContext context, bool isMe) {
     final durationSeconds = message.duration ?? 0;
-    
+
     return VoiceMessagePlayer(
       duration: Duration(seconds: durationSeconds),
       audioUrl: message.mediaUrl,
@@ -3484,17 +3660,25 @@ class _MessageBubble extends StatelessWidget {
   }
 
   /// Dosya içeriği
-  Widget _buildFileContent(BuildContext context, bool isDark, bool isMe, Color myTextColor, Color theirTextColor) {
+  Widget _buildFileContent(
+    BuildContext context,
+    bool isDark,
+    bool isMe,
+    Color myTextColor,
+    Color theirTextColor,
+  ) {
     final fileName = message.fileName ?? 'Dosya';
     final fileSize = message.fileSize;
-    
+
     return Row(
-                mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: isMe ? Colors.white.withAlpha(50) : NearTheme.primary.withAlpha(30),
+            color: isMe
+                ? Colors.white.withAlpha(50)
+                : NearTheme.primary.withAlpha(30),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -3507,10 +3691,10 @@ class _MessageBubble extends StatelessWidget {
         Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+            children: [
+              Text(
                 fileName,
-                    style: TextStyle(
+                style: TextStyle(
                   color: isMe ? myTextColor : theirTextColor,
                   fontWeight: FontWeight.w500,
                   fontSize: 14,
@@ -3522,10 +3706,12 @@ class _MessageBubble extends StatelessWidget {
                 Text(
                   _formatFileSize(fileSize),
                   style: TextStyle(
-                    color: isMe ? Colors.white60 : (isDark ? Colors.white54 : Colors.black45),
+                    color: isMe
+                        ? Colors.white60
+                        : (isDark ? Colors.white54 : Colors.black45),
                     fontSize: 12,
-                    ),
                   ),
+                ),
             ],
           ),
         ),
@@ -3539,7 +3725,7 @@ class _MessageBubble extends StatelessWidget {
     if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
       return const SizedBox(height: 100, child: Center(child: Text('GIF')));
     }
-    
+
     return GestureDetector(
       onTap: () => _openFullScreenImage(context, message.mediaUrl!),
       child: ClipRRect(
@@ -3547,9 +3733,7 @@ class _MessageBubble extends StatelessWidget {
         child: Image.network(
           message.mediaUrl!,
           fit: BoxFit.cover,
-          headers: const {
-            'Accept': 'image/gif, image/*',
-          },
+          headers: const {'Accept': 'image/gif, image/*'},
           loadingBuilder: (context, child, progress) {
             if (progress == null) return child;
             return Container(
@@ -3567,7 +3751,7 @@ class _MessageBubble extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(12),
-                    ),
+              ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -3576,9 +3760,9 @@ class _MessageBubble extends StatelessWidget {
                   Text(
                     'GIF yüklenemedi',
                     style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                  ),
+                ],
               ),
-            ],
-          ),
             );
           },
         ),
@@ -3587,16 +3771,24 @@ class _MessageBubble extends StatelessWidget {
   }
 
   /// Konum içeriği
-  Widget _buildLocationContent(BuildContext context, bool isDark, bool isMe, Color myTextColor, Color theirTextColor) {
+  Widget _buildLocationContent(
+    BuildContext context,
+    bool isDark,
+    bool isMe,
+    Color myTextColor,
+    Color theirTextColor,
+  ) {
     final address = message.text.isNotEmpty ? message.text : 'Konum';
-    
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: isMe ? Colors.white.withAlpha(50) : Colors.green.withAlpha(30),
+            color: isMe
+                ? Colors.white.withAlpha(50)
+                : Colors.green.withAlpha(30),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
@@ -3621,7 +3813,9 @@ class _MessageBubble extends StatelessWidget {
               Text(
                 address,
                 style: TextStyle(
-                  color: isMe ? Colors.white70 : (isDark ? Colors.white60 : Colors.black54),
+                  color: isMe
+                      ? Colors.white70
+                      : (isDark ? Colors.white60 : Colors.black54),
                   fontSize: 13,
                 ),
                 maxLines: 2,
@@ -3636,19 +3830,30 @@ class _MessageBubble extends StatelessWidget {
   }
 
   /// Kişi kartı içeriği
-  Widget _buildContactContent(BuildContext context, bool isDark, bool isMe, Color myTextColor, Color theirTextColor) {
+  Widget _buildContactContent(
+    BuildContext context,
+    bool isDark,
+    bool isMe,
+    Color myTextColor,
+    Color theirTextColor,
+  ) {
     final contactName = message.metadata?['name'] ?? message.text;
     final contactPhone = message.metadata?['phone'] ?? '';
-    
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         CircleAvatar(
           radius: 22,
-          backgroundColor: isMe ? Colors.white.withAlpha(50) : NearTheme.primary,
+          backgroundColor: isMe
+              ? Colors.white.withAlpha(50)
+              : NearTheme.primary,
           child: Text(
             contactName.isNotEmpty ? contactName[0].toUpperCase() : '?',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -3668,7 +3873,9 @@ class _MessageBubble extends StatelessWidget {
                 Text(
                   contactPhone,
                   style: TextStyle(
-                    color: isMe ? Colors.white70 : (isDark ? Colors.white60 : Colors.black54),
+                    color: isMe
+                        ? Colors.white70
+                        : (isDark ? Colors.white60 : Colors.black54),
                     fontSize: 13,
                   ),
                 ),
@@ -3811,7 +4018,10 @@ class _MessageSearchSheetState extends State<_MessageSearchSheet> {
       _query = query;
     });
 
-    final results = await _chatService.searchMessagesInChat(widget.chatId, query);
+    final results = await _chatService.searchMessagesInChat(
+      widget.chatId,
+      query,
+    );
 
     if (mounted && _query == query) {
       setState(() {
@@ -3850,7 +4060,10 @@ class _MessageSearchSheetState extends State<_MessageSearchSheet> {
             child: Row(
               children: [
                 IconButton(
-                  icon: Icon(Icons.close, color: isDark ? Colors.white : Colors.black),
+                  icon: Icon(
+                    Icons.close,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
                 Expanded(
@@ -3879,10 +4092,17 @@ class _MessageSearchSheetState extends State<_MessageSearchSheet> {
               style: TextStyle(color: isDark ? Colors.white : Colors.black87),
               decoration: InputDecoration(
                 hintText: 'Mesaj ara...',
-                hintStyle: TextStyle(color: isDark ? Colors.white38 : Colors.black38),
-                prefixIcon: Icon(Icons.search, color: isDark ? Colors.white54 : Colors.black45),
+                hintStyle: TextStyle(
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  color: isDark ? Colors.white54 : Colors.black45,
+                ),
                 filled: true,
-                fillColor: isDark ? Colors.white.withOpacity(0.1) : Colors.grey.shade100,
+                fillColor: isDark
+                    ? Colors.white.withValues(alpha: 0.1)
+                    : Colors.grey.shade100,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -3895,58 +4115,69 @@ class _MessageSearchSheetState extends State<_MessageSearchSheet> {
           // Results
           Expanded(
             child: _isSearching
-                ? Center(child: CircularProgressIndicator(color: NearTheme.primary))
+                ? Center(
+                    child: CircularProgressIndicator(color: NearTheme.primary),
+                  )
                 : _results.isEmpty
-                    ? Center(
-                        child: Text(
-                          _query.isEmpty ? 'Aramak için yazın' : 'Sonuç bulunamadı',
-                          style: TextStyle(color: isDark ? Colors.white54 : Colors.black45),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: _results.length,
-                        itemBuilder: (context, index) {
-                          final message = _results[index];
-                          final sender = message['sender'] as Map<String, dynamic>?;
-                          final senderName = sender?['full_name'] ?? sender?['username'] ?? 'Bilinmeyen';
-                          final content = message['content'] ?? '';
-                          final createdAt = DateTime.tryParse(message['created_at'] ?? '');
-                          final timeStr = createdAt != null
-                              ? '${createdAt.day}.${createdAt.month}.${createdAt.year} ${createdAt.hour}:${createdAt.minute.toString().padLeft(2, '0')}'
-                              : '';
-
-                          return ListTile(
-                            onTap: () => widget.onMessageTap(message),
-                            leading: CircleAvatar(
-                              backgroundColor: NearTheme.primary,
-                              child: Text(
-                                senderName[0].toUpperCase(),
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            title: Text(
-                              senderName,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: isDark ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                            subtitle: Text(
-                              content,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
-                            ),
-                            trailing: Text(
-                              timeStr,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: isDark ? Colors.white38 : Colors.black38,
-                              ),
-                            ),
-                          );
-                        },
+                ? Center(
+                    child: Text(
+                      _query.isEmpty ? 'Aramak için yazın' : 'Sonuç bulunamadı',
+                      style: TextStyle(
+                        color: isDark ? Colors.white54 : Colors.black45,
                       ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _results.length,
+                    itemBuilder: (context, index) {
+                      final message = _results[index];
+                      final sender = message['sender'] as Map<String, dynamic>?;
+                      final senderName =
+                          sender?['full_name'] ??
+                          sender?['username'] ??
+                          'Bilinmeyen';
+                      final content = message['content'] ?? '';
+                      final createdAt = DateTime.tryParse(
+                        message['created_at'] ?? '',
+                      );
+                      final timeStr = createdAt != null
+                          ? '${createdAt.day}.${createdAt.month}.${createdAt.year} ${createdAt.hour}:${createdAt.minute.toString().padLeft(2, '0')}'
+                          : '';
+
+                      return ListTile(
+                        onTap: () => widget.onMessageTap(message),
+                        leading: CircleAvatar(
+                          backgroundColor: NearTheme.primary,
+                          child: Text(
+                            senderName[0].toUpperCase(),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        title: Text(
+                          senderName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        subtitle: Text(
+                          content,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isDark ? Colors.white54 : Colors.black54,
+                          ),
+                        ),
+                        trailing: Text(
+                          timeStr,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.white38 : Colors.black38,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -3969,8 +4200,9 @@ class _FullScreenImageViewer extends StatefulWidget {
 }
 
 class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
-  final TransformationController _transformationController = TransformationController();
-  
+  final TransformationController _transformationController =
+      TransformationController();
+
   @override
   void dispose() {
     _transformationController.dispose();
@@ -3993,7 +4225,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
             onTap: () => Navigator.of(context).pop(),
             child: Container(color: Colors.transparent),
           ),
-          
+
           // Fotoğraf - pinch to zoom
           Center(
             child: Hero(
@@ -4004,7 +4236,8 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                 maxScale: 4.0,
                 onInteractionEnd: (details) {
                   // Çok küçükse sıfırla
-                  if (_transformationController.value.getMaxScaleOnAxis() < 1.0) {
+                  if (_transformationController.value.getMaxScaleOnAxis() <
+                      1.0) {
                     _resetZoom();
                   }
                 },
@@ -4019,7 +4252,8 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                       child: Center(
                         child: CircularProgressIndicator(
                           value: progress.expectedTotalBytes != null
-                              ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                              ? progress.cumulativeBytesLoaded /
+                                    progress.expectedTotalBytes!
                               : null,
                           color: Colors.white,
                         ),
@@ -4041,7 +4275,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
               ),
             ),
           ),
-          
+
           // Üst bar - kapatma butonu
           Positioned(
             top: 0,
@@ -4054,17 +4288,18 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black54,
-                      Colors.transparent,
-                    ],
+                    colors: [Colors.black54, Colors.transparent],
                   ),
                 ),
                 child: Row(
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 28,
+                      ),
                     ),
                     const Spacer(),
                     IconButton(
@@ -4077,7 +4312,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
               ),
             ),
           ),
-          
+
           // Alt bilgi
           Positioned(
             bottom: 0,
@@ -4090,10 +4325,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
-                    colors: [
-                      Colors.black54,
-                      Colors.transparent,
-                    ],
+                    colors: [Colors.black54, Colors.transparent],
                   ),
                 ),
                 child: Row(
@@ -4101,10 +4333,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                   children: [
                     Text(
                       'Yakınlaştırmak için parmakla sıkıştırın',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                   ],
                 ),
@@ -4141,10 +4370,12 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
 
   Future<void> _initializeVideo() async {
     try {
-      _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-      
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.videoUrl),
+      );
+
       await _controller.initialize();
-      
+
       if (mounted) {
         setState(() {
           _isInitialized = true;
@@ -4205,7 +4436,11 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                   ? Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.error_outline, color: Colors.white54, size: 64),
+                        const Icon(
+                          Icons.error_outline,
+                          color: Colors.white54,
+                          size: 64,
+                        ),
                         const SizedBox(height: 16),
                         const Text(
                           'Video yüklenemedi',
@@ -4214,19 +4449,22 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                         const SizedBox(height: 8),
                         Text(
                           widget.videoUrl,
-                          style: const TextStyle(color: Colors.white38, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 12,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                       ],
                     )
                   : _isInitialized
-                      ? AspectRatio(
-                          aspectRatio: _controller.value.aspectRatio,
-                          child: VideoPlayer(_controller),
-                        )
-                      : const CircularProgressIndicator(color: Colors.white),
+                  ? AspectRatio(
+                      aspectRatio: _controller.value.aspectRatio,
+                      child: VideoPlayer(_controller),
+                    )
+                  : const CircularProgressIndicator(color: Colors.white),
             ),
-            
+
             // Controls overlay
             if (_showControls && _isInitialized) ...[
               // Top bar
@@ -4236,22 +4474,26 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 right: 0,
                 child: SafeArea(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black54,
-                          Colors.transparent,
-                        ],
+                        colors: [Colors.black54, Colors.transparent],
                       ),
                     ),
                     child: Row(
                       children: [
                         IconButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                          icon: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 28,
+                          ),
                         ),
                         const Spacer(),
                       ],
@@ -4259,7 +4501,7 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                   ),
                 ),
               ),
-              
+
               // Center play/pause button
               Center(
                 child: GestureDetector(
@@ -4271,14 +4513,16 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      _controller.value.isPlaying
+                          ? Icons.pause
+                          : Icons.play_arrow,
                       color: Colors.white,
                       size: 48,
                     ),
                   ),
                 ),
               ),
-              
+
               // Bottom controls
               Positioned(
                 bottom: 0,
@@ -4291,10 +4535,7 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                       gradient: LinearGradient(
                         begin: Alignment.bottomCenter,
                         end: Alignment.topCenter,
-                        colors: [
-                          Colors.black54,
-                          Colors.transparent,
-                        ],
+                        colors: [Colors.black54, Colors.transparent],
                       ),
                     ),
                     child: Column(
@@ -4308,33 +4549,50 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                               children: [
                                 SliderTheme(
                                   data: SliderTheme.of(context).copyWith(
-                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 6,
+                                    ),
                                     trackHeight: 3,
                                     activeTrackColor: NearTheme.primary,
                                     inactiveTrackColor: Colors.white24,
                                     thumbColor: NearTheme.primary,
                                   ),
                                   child: Slider(
-                                    value: value.position.inMilliseconds.toDouble(),
+                                    value: value.position.inMilliseconds
+                                        .toDouble(),
                                     min: 0,
-                                    max: value.duration.inMilliseconds.toDouble(),
+                                    max: value.duration.inMilliseconds
+                                        .toDouble(),
                                     onChanged: (newValue) {
-                                      _controller.seekTo(Duration(milliseconds: newValue.toInt()));
+                                      _controller.seekTo(
+                                        Duration(
+                                          milliseconds: newValue.toInt(),
+                                        ),
+                                      );
                                     },
                                   ),
                                 ),
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                  ),
                                   child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(
                                         _formatDuration(value.position),
-                                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                       Text(
                                         _formatDuration(value.duration),
-                                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -4349,7 +4607,7 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 ),
               ),
             ],
-            
+
             // Close button when controls are hidden
             if (!_showControls || _hasError)
               Positioned(
@@ -4358,7 +4616,11 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
                 child: SafeArea(
                   child: IconButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 28,
+                    ),
                   ),
                 ),
               ),

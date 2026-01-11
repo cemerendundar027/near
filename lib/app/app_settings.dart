@@ -55,6 +55,9 @@ class AppSettings extends ChangeNotifier {
   bool soundEnabled = true;
   bool vibrationEnabled = true;
 
+  // Onboarding durumu
+  bool onboardingCompleted = false;
+
   // Gizlilik ayarları
   String lastSeenPrivacy = 'everyone'; // everyone, contacts, nobody
   String profilePhotoPrivacy = 'everyone';
@@ -114,6 +117,9 @@ class AppSettings extends ChangeNotifier {
     reduceMotion = _prefs!.getBool('reduceMotion') ?? false;
     highContrast = _prefs!.getBool('highContrast') ?? false;
     largeText = _prefs!.getBool('largeText') ?? false;
+
+    // Onboarding
+    onboardingCompleted = _prefs!.getBool('onboardingCompleted') ?? false;
   }
 
   Future<void> _save(String key, dynamic value) async {
@@ -238,6 +244,13 @@ class AppSettings extends ChangeNotifier {
   void setLargeText(bool v) {
     largeText = v;
     _save('largeText', v);
+    notifyListeners();
+  }
+
+  // Onboarding
+  void setOnboardingCompleted(bool v) {
+    onboardingCompleted = v;
+    _save('onboardingCompleted', v);
     notifyListeners();
   }
 }

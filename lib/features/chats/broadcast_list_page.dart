@@ -15,7 +15,7 @@ class _BroadcastListPageState extends State<BroadcastListPage> {
   final _nameController = TextEditingController();
   final _searchController = TextEditingController();
   final Set<String> _selectedUserIds = {};
-  bool _isLoading = true;
+  // Loading durumu kaldırıldı, kontaktlar hemen yükleniyor
 
   // Supabase'den yüklenen kişiler
   List<_Contact> _contacts = [];
@@ -41,13 +41,10 @@ class _BroadcastListPageState extends State<BroadcastListPage> {
               phone: '', // Telefon numarası gizlilik nedeniyle gösterilmiyor
             );
           }).toList();
-          _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      // Silent fail
     }
   }
 

@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'supabase_service.dart';
+import 'chat_service.dart';
 
 /// Contact Service - Kişi yönetimi için Supabase entegrasyonu
-/// 
+///
 /// Özellikler:
 /// - Kişi ekleme/çıkarma
 /// - Kişi engelleme/engel kaldırma
@@ -12,21 +13,21 @@ class ContactService extends ChangeNotifier {
   static final instance = ContactService._();
 
   final _supabase = SupabaseService.instance;
-  
+
   // Cached data
   List<Map<String, dynamic>> _contacts = [];
   List<Map<String, dynamic>> _blockedUsers = [];
   Map<String, dynamic>? _privacySettings;
-  
+
   // Loading states
   bool _isLoading = false;
-  
+
   // Getters
   List<Map<String, dynamic>> get contacts => _contacts;
   List<Map<String, dynamic>> get blockedUsers => _blockedUsers;
   Map<String, dynamic>? get privacySettings => _privacySettings;
   bool get isLoading => _isLoading;
-  
+
   String? get currentUserId => _supabase.currentUser?.id;
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -39,7 +40,7 @@ class ContactService extends ChangeNotifier {
       debugPrint('ContactService: User not logged in');
       return;
     }
-    
+
     await Future.wait([
       loadContacts(),
       loadBlockedUsers(),
@@ -54,7 +55,7 @@ class ContactService extends ChangeNotifier {
   /// Tüm kişileri yükle
   Future<void> loadContacts() async {
     if (currentUserId == null) return;
-    
+
     _isLoading = true;
     notifyListeners();
 
@@ -137,7 +138,10 @@ class ContactService extends ChangeNotifier {
   }
 
   /// Kişi takma adını güncelle
-  Future<bool> updateContactNickname(String contactUserId, String? nickname) async {
+  Future<bool> updateContactNickname(
+    String contactUserId,
+    String? nickname,
+  ) async {
     if (currentUserId == null) return false;
 
     try {
@@ -192,7 +196,9 @@ class ContactService extends ChangeNotifier {
           .order('created_at', ascending: false);
 
       _blockedUsers = List<Map<String, dynamic>>.from(result);
-      debugPrint('ContactService: Loaded ${_blockedUsers.length} blocked users');
+      debugPrint(
+        'ContactService: Loaded ${_blockedUsers.length} blocked users',
+      );
     } catch (e) {
       debugPrint('ContactService: Error loading blocked users: $e');
     }
@@ -230,11 +236,8 @@ class ContactService extends ChangeNotifier {
         });
       }
 
-      await Future.wait([
-        loadContacts(),
-        loadBlockedUsers(),
-      ]);
-      
+      await Future.wait([loadContacts(), loadBlockedUsers()]);
+
       debugPrint('ContactService: User blocked: $userId');
       return true;
     } catch (e) {
@@ -254,11 +257,8 @@ class ContactService extends ChangeNotifier {
           .eq('user_id', currentUserId!)
           .eq('contact_id', userId);
 
-      await Future.wait([
-        loadContacts(),
-        loadBlockedUsers(),
-      ]);
-      
+      await Future.wait([loadContacts(), loadBlockedUsers()]);
+
       debugPrint('ContactService: User unblocked: $userId');
       return true;
     } catch (e) {
@@ -303,17 +303,21 @@ class ContactService extends ChangeNotifier {
     try {
       final result = await _supabase.client
           .from('profiles')
-          .select('privacy_last_seen, privacy_profile_photo, privacy_about, privacy_read_receipts')
+          .select(
+            'privacy_last_seen, privacy_profile_photo, privacy_about, privacy_read_receipts',
+          )
           .eq('id', currentUserId!)
           .maybeSingle();
 
-      _privacySettings = result ?? {
-        'privacy_last_seen': 'everyone',
-        'privacy_profile_photo': 'everyone',
-        'privacy_about': 'everyone',
-        'privacy_read_receipts': true,
-      };
-      
+      _privacySettings =
+          result ??
+          {
+            'privacy_last_seen': 'everyone',
+            'privacy_profile_photo': 'everyone',
+            'privacy_about': 'everyone',
+            'privacy_read_receipts': true,
+          };
+
       debugPrint('ContactService: Privacy settings loaded');
     } catch (e) {
       debugPrint('ContactService: Error loading privacy settings: $e');
@@ -356,7 +360,15 @@ class ContactService extends ChangeNotifier {
 
   /// Okundu bilgisi ayarını güncelle
   Future<bool> updateReadReceiptsPrivacy(bool enabled) async {
-    return _updatePrivacySetting('privacy_read_receipts', enabled);
+    final success = await _updatePrivacySetting(
+      'privacy_read_receipts',
+      enabled,
+    );
+    if (success) {
+      // ChatService cache'ini de güncelle
+      ChatService.instance.updateReadReceiptsCache(enabled);
+    }
+    return success;
   }
 
   /// Genel privacy ayarı güncelleme metodu
@@ -366,15 +378,12 @@ class ContactService extends ChangeNotifier {
     try {
       await _supabase.client
           .from('profiles')
-          .update({
-            key: value,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
+          .update({key: value, 'updated_at': DateTime.now().toIso8601String()})
           .eq('id', currentUserId!);
 
       _privacySettings?[key] = value;
       notifyListeners();
-      
+
       debugPrint('ContactService: Privacy setting updated: $key = $value');
       return true;
     } catch (e) {
@@ -386,7 +395,7 @@ class ContactService extends ChangeNotifier {
   /// Kullanıcının son görülme bilgisini görebilir miyim?
   Future<bool> canSeeLastSeen(String userId) async {
     if (currentUserId == null) return false;
-    
+
     try {
       // Kendi son görülme ayarım "nobody" ise başkalarınınkini de göremem
       if (_privacySettings?['privacy_last_seen'] == 'nobody') {
@@ -440,7 +449,7 @@ class ContactService extends ChangeNotifier {
 
   Future<bool> _canSeePrivateInfo(String userId, String privacyKey) async {
     if (currentUserId == null) return false;
-    
+
     try {
       final result = await _supabase.client
           .from('profiles')
@@ -487,7 +496,9 @@ class ContactService extends ChangeNotifier {
     try {
       final results = await _supabase.client
           .from('profiles')
-          .select('id, username, full_name, avatar_url, bio, is_online, last_seen')
+          .select(
+            'id, username, full_name, avatar_url, bio, is_online, last_seen',
+          )
           .or('username.ilike.%$query%,full_name.ilike.%$query%')
           .neq('id', currentUserId!)
           .limit(20);
@@ -530,4 +541,3 @@ class ContactService extends ChangeNotifier {
     }
   }
 }
-

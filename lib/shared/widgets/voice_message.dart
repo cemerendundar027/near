@@ -796,17 +796,26 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
                               ),
                             ],
                     ),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child: Icon(
-                        _isPlaying
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                        key: ValueKey(_isPlaying),
-                        color: playIconColor,
-                        size: 26,
-                      ),
-                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation(Colors.white),
+                            ),
+                          )
+                        : AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              _isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              key: ValueKey(_isPlaying),
+                              color: playIconColor,
+                              size: 26,
+                            ),
+                          ),
                   ),
                 );
               },

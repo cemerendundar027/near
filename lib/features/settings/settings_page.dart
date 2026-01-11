@@ -162,7 +162,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                       if (email != null && email.isNotEmpty) ...[
                         Text(
-                          email!,
+                          email,
                           style: TextStyle(
                             color: isDark ? Colors.white60 : Colors.black54,
                             fontSize: 13,
@@ -374,7 +374,7 @@ class _SettingsPageState extends State<SettingsPage> {
       backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
           ? NetworkImage(avatarUrl)
           : null,
-      onBackgroundImageError: avatarUrl != null ? (_, __) {
+      onBackgroundImageError: avatarUrl != null ? (exception, stackTrace) {
         debugPrint('Avatar load error: $avatarUrl');
       } : null,
       child: avatarUrl == null || avatarUrl.isEmpty
@@ -672,7 +672,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: Image.network(
                       avatarUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Icon(
+                      errorBuilder: (context, error, stackTrace) => Icon(
                         Icons.person,
                         size: 48,
                         color: isDark ? Colors.white54 : Colors.grey.shade600,

@@ -35,9 +35,11 @@ class SettingsService extends ChangeNotifier {
   
   bool _enterToSend = true;
   bool _mediaVisibility = true;
+  String _defaultMessageEffect = 'none';
 
   bool get enterToSend => _enterToSend;
   bool get mediaVisibility => _mediaVisibility;
+  String get defaultMessageEffect => _defaultMessageEffect;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // INITIALIZATION
@@ -66,6 +68,7 @@ class SettingsService extends ChangeNotifier {
     // Chat settings
     _enterToSend = _prefs?.getBool('chat_enter_to_send') ?? true;
     _mediaVisibility = _prefs?.getBool('chat_media_visibility') ?? true;
+    _defaultMessageEffect = _prefs?.getString('chat_default_effect') ?? 'none';
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -130,6 +133,12 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setDefaultMessageEffect(String value) async {
+    _defaultMessageEffect = value;
+    await _prefs?.setString('chat_default_effect', value);
+    notifyListeners();
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // RESET
   // ═══════════════════════════════════════════════════════════════════════════
@@ -157,9 +166,11 @@ class SettingsService extends ChangeNotifier {
   Future<void> resetChatSettings() async {
     _enterToSend = true;
     _mediaVisibility = true;
+    _defaultMessageEffect = 'none';
 
     await _prefs?.setBool('chat_enter_to_send', true);
     await _prefs?.setBool('chat_media_visibility', true);
+    await _prefs?.setString('chat_default_effect', 'none');
 
     notifyListeners();
   }

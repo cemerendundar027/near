@@ -296,22 +296,29 @@ class LastSeenText extends StatelessWidget {
   }
 
   String _formatLastSeen(DateTime time) {
+    final localTime = time.toLocal();
     final now = DateTime.now();
-    final diff = now.difference(time);
+    final diff = now.difference(localTime);
 
-    if (diff.inMinutes < 1) {
+    if (diff.inMinutes < 3) {
       return 'az önce görüldü';
-    } else if (diff.inMinutes < 60) {
-      return '${diff.inMinutes} dakika önce görüldü';
-    } else if (diff.inHours < 24) {
-      return '${diff.inHours} saat önce görüldü';
-    } else if (diff.inDays == 1) {
-      return 'dün ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')} görüldü';
+    }
+
+    final hh = localTime.hour.toString().padLeft(2, '0');
+    final mm = localTime.minute.toString().padLeft(2, '0');
+
+    if (now.year == localTime.year && 
+        now.month == localTime.month && 
+        now.day == localTime.day) {
+      return 'bugün saat $hh:$mm görüldü';
+    } else if (now.difference(localTime).inDays == 1 || 
+               (now.day - localTime.day == 1 && now.month == localTime.month)) {
+      return 'dün saat $hh:$mm görüldü';
     } else if (diff.inDays < 7) {
       final days = ['Pzr', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
-      return '${days[time.weekday % 7]} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')} görüldü';
+      return '${days[localTime.weekday % 7]} saat $hh:$mm görüldü';
     } else {
-      return '${time.day}/${time.month}/${time.year} görüldü';
+      return '${localTime.day}/${localTime.month}/${localTime.year} görüldü';
     }
   }
 }

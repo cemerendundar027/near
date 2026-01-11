@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Doğrulama - Near</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+    <tr>
+      <td style="padding: 40px 20px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 24px; box-shadow: 0 4px 24px rgba(123, 63, 242, 0.1);">
+          
+          <!-- Header with gradient -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #7B3FF2 0%, #9D6FFF 100%); padding: 40px 40px 30px; border-radius: 24px 24px 0 0; text-align: center;">
+              <!-- Logo placeholder - replace LOGO_URL with actual URL -->
+              <div style="width: 80px; height: 80px; margin: 0 auto 16px; background: rgba(255,255,255,0.2); border-radius: 20px; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 40px;">💬</span>
+              </div>
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Near</h1>
+              <p style="margin: 8px 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">Yakınlarınla bağlan</p>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px;">
+              <h2 style="margin: 0 0 16px; color: #1a1a2e; font-size: 22px; font-weight: 600; text-align: center;">
+                Email Adresini Doğrula 📧
+              </h2>
+              <p style="margin: 0 0 24px; color: #666; font-size: 15px; line-height: 1.6; text-align: center;">
+                Merhaba! Near'a hoş geldin. Hesabını aktifleştirmek için aşağıdaki butona tıkla.
+              </p>
+              
+              <!-- CTA Button -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td style="text-align: center; padding: 8px 0 24px;">
+                    <a href="{{ .ConfirmationURL }}" style="display: inline-block; background: linear-gradient(135deg, #7B3FF2 0%, #9D6FFF 100%); color: #ffffff; text-decoration: none; padding: 16px 48px; border-radius: 50px; font-size: 16px; font-weight: 600; box-shadow: 0 4px 16px rgba(123, 63, 242, 0.3);">
+                      Email'imi Doğrula
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Alternative link -->
+              <p style="margin: 0; color: #999; font-size: 13px; text-align: center; line-height: 1.5;">
+                Buton çalışmıyorsa bu linki tarayıcına yapıştır:<br>
+                <a href="{{ .ConfirmationURL }}" style="color: #7B3FF2; word-break: break-all;">{{ .ConfirmationURL }}</a>
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #f9f9fb; border-radius: 0 0 24px 24px; text-align: center;">
+              <p style="margin: 0 0 8px; color: #999; font-size: 12px;">
+                Bu emaili beklemiyorsan, güvenle yok sayabilirsin.
+              </p>
+              <p style="margin: 0; color: #ccc; font-size: 11px;">
+                © 2026 Near. Tüm hakları saklıdır.
+              </p>
+            </td>
+          </tr>
+          
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -21,14 +21,15 @@ import '../features/settings/muted_users_page.dart';
 import '../features/settings/app_lock_page.dart';
 
 import '../features/profile/profile_edit_page.dart';
-// user_profile_page, group_info_page, media_gallery_page, forward_message_page
+import '../features/chats/group_info_page.dart';
+// user_profile_page, media_gallery_page, forward_message_page
 // require constructor arguments and are navigated via Navigator.push
 
 import '../features/splash/splash_page.dart';
 import '../features/onboarding/onboarding_page.dart';
 import '../features/auth/auth_page.dart';
 
-import '../features/chats/create_group_page.dart';
+import '../features/chats/create_group_select_members_page.dart';
 import '../features/chats/new_chat_page.dart';
 import '../features/chats/chat_extras_pages.dart';
 import '../features/chats/search_contacts_pages.dart';
@@ -71,10 +72,14 @@ class _NearAppState extends State<NearApp> {
     // Lifecycle observer'ı kaydet (online durumu için)
     _lifecycleObserver = AppLifecycleObserver();
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
+    
+    // Heartbeat'i başlat (uygulama açıldığında online ol)
+    _lifecycleObserver.startHeartbeat();
   }
 
   @override
   void dispose() {
+    _lifecycleObserver.stopHeartbeat();
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
     super.dispose();
   }
@@ -225,7 +230,7 @@ class _NearAppState extends State<NearApp> {
             GoRoute(
               path: 'create-group',
               name: 'create-group',
-              builder: (context, state) => const CreateGroupPage(),
+              builder: (context, state) => const CreateGroupSelectMembersPage(),
             ),
             // Group info (3.1, 3.2, 3.3)
             GoRoute(

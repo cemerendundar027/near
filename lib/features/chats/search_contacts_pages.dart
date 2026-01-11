@@ -819,6 +819,7 @@ class _ContactsPageState extends State<ContactsPage> {
                                         onPressed: () async {
                                           HapticFeedback.selectionClick();
                                           final success = await _contactService.addContact(user['id']);
+                                          if (!context.mounted) return;
                                           if (success) {
                                             Navigator.pop(context);
                                             _toast('$name kişilere eklendi');

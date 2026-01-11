@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'models.dart';
 
@@ -140,7 +141,7 @@ class ChatPreviewAdapter extends TypeAdapter<ChatPreview> {
   @override
   ChatPreview read(BinaryReader reader) {
     final id = reader.readString();
-    final oderId = reader.readString();
+    final otherUserId = reader.readString();
     final name = reader.readString();
     final lastMessage = reader.readString();
     final time = reader.readString();
@@ -151,7 +152,7 @@ class ChatPreviewAdapter extends TypeAdapter<ChatPreview> {
     
     return ChatPreview(
       id: id,
-      userId: oderId,
+      userId: otherUserId,
       name: name,
       lastMessage: lastMessage,
       time: time,
@@ -198,12 +199,12 @@ class HiveBoxes {
         
         // Yeni versiyonu kaydet
         await settingsBox.put('cache_version', cacheVersion);
-        print('HiveBoxes: Old cache cleared (v$storedVersion -> v$cacheVersion)');
+        debugPrint('HiveBoxes: Old cache cleared (v$storedVersion -> v$cacheVersion)');
       }
       
       await settingsBox.close();
     } catch (e) {
-      print('HiveBoxes: Error clearing old cache: $e');
+      debugPrint('HiveBoxes: Error clearing old cache: $e');
       // Hata durumunda kutuları silmeyi dene
       try {
         await Hive.deleteBoxFromDisk(messages);

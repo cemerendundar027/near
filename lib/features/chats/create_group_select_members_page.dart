@@ -212,7 +212,7 @@ class _CreateGroupSelectMembersPageState extends State<CreateGroupSelectMembersP
                           children: [
                              CircleAvatar(
                               radius: 24,
-                              backgroundColor: NearTheme.primary.withOpacity(0.2),
+                              backgroundColor: NearTheme.primary.withValues(alpha: 0.2),
                               backgroundImage: user['avatar_url'] != null
                                   ? NetworkImage(user['avatar_url'])
                                   : null,

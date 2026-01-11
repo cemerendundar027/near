@@ -556,7 +556,7 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                                             ),
                                           );
                                         },
-                                        errorBuilder: (_, __, ___) => Icon(
+                                        errorBuilder: (context, error, stackTrace) => Icon(
                                           Icons.person,
                                           size: 70,
                                           color: isDark ? Colors.white54 : Colors.grey.shade600,
@@ -807,15 +807,11 @@ class _ProfileField extends StatelessWidget {
   final FocusNode focusNode;
   final VoidCallback onTap;
   final VoidCallback onEditingComplete;
-  final ValueChanged<String>? onChanged;
   final bool isDark;
   final int maxLength;
   final String? helperText;
   final bool showPresets;
   final VoidCallback? onPresetsPressed;
-  final String? errorText;
-  final bool isLoading;
-  final bool enabled;
 
   const _ProfileField({
     required this.icon,
@@ -827,21 +823,17 @@ class _ProfileField extends StatelessWidget {
     required this.focusNode,
     required this.onTap,
     required this.onEditingComplete,
-    this.onChanged,
     required this.isDark,
     this.maxLength = 25,
     this.helperText,
     this.showPresets = false,
     this.onPresetsPressed,
-    this.errorText,
-    this.isLoading = false,
-    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: !enabled ? null : (isEditing ? null : onTap),
+      onTap: isEditing ? null : onTap,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
         child: Row(
@@ -893,7 +885,6 @@ class _ProfileField extends StatelessWidget {
                               fontSize: 12,
                             ),
                           ),
-                          onChanged: onChanged,
                           onEditingComplete: onEditingComplete,
                           cursorColor: NearTheme.primary,
                         ),
@@ -918,29 +909,6 @@ class _ProfileField extends StatelessWidget {
                         color: value.isEmpty
                             ? (isDark ? Colors.white38 : Colors.black38)
                             : (isDark ? Colors.white : Colors.black87),
-                      ),
-                    ),
-                  if (errorText != null && isEditing)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        errorText!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.redAccent,
-                        ),
-                      ),
-                    ),
-                  if (isLoading)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: SizedBox(
-                        height: 12,
-                        width: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: NearTheme.primary,
-                        ),
                       ),
                     ),
                 ],

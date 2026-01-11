@@ -448,7 +448,7 @@ class _StoryCreatePageState extends State<StoryCreatePage>
         metadata: {
           'useGradient': _useGradient,
           'gradientIndex': _selectedGradientIndex,
-          'backgroundColor': _backgroundColor.value,
+          'backgroundColor': _backgroundColor.toARGB32(),
           'fontSize': _fontSize,
           'textAlign': _textAlign.toString(),
           'isBold': _isBold,
@@ -1138,8 +1138,8 @@ class _StoryCreatePageState extends State<StoryCreatePage>
                       ),
                       child: Text(
                         _videoTrimResult != null
-                            ? '${_formatVideoDuration(_videoTrimResult!.duration)}'
-                            : '${_formatVideoDuration(_videoController!.value.duration)}',
+                            ? _formatVideoDuration(_videoTrimResult!.duration)
+                            : _formatVideoDuration(_videoController!.value.duration),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w500,

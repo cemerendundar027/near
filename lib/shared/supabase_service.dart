@@ -405,7 +405,7 @@ class SupabaseService {
     final cleanBase = baseName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toLowerCase();
     
     for (var i = 0; i < 5; i++) {
-      final suggestion = i == 0 ? cleanBase : '${cleanBase}${100 + i}';
+      final suggestion = i == 0 ? cleanBase : '$cleanBase${100 + i}';
       if (await isUsernameAvailable(suggestion)) {
         suggestions.add(suggestion);
       }
