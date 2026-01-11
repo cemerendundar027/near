@@ -116,14 +116,4 @@ class MessageStore extends ChangeNotifier {
     _messageCache.clear();
     notifyListeners();
   }
-
-  /// Demo mesajları yükle (test amaçlı)
-  Future<void> loadDemoMessages(String chatId, List<Message> messages) async {
-    for (final message in messages) {
-      await _box.put(message.id, message);
-    }
-    _messageCache[chatId] = List.from(messages)
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    notifyListeners();
-  }
 }

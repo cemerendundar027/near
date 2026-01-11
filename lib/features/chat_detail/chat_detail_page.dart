@@ -220,7 +220,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     // Supabase'de bu chat var mı kontrol et
     final currentUserId = chatService.currentUserId;
     if (currentUserId == null) {
-      debugPrint('ChatService: User not logged in, using mock data');
+      debugPrint('ChatDetailPage: User not logged in');
       return;
     }
 
@@ -337,7 +337,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
     } catch (e) {
       debugPrint('ChatDetailPage: Error loading Supabase messages: $e');
-      // Mock data'ya devam et
       _useSupabase = false;
     }
   }
@@ -837,8 +836,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
-  String _newId() => DateTime.now().microsecondsSinceEpoch.toString();
-
   void _toast(String text, {bool isError = false}) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
@@ -852,93 +849,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
   }
 
-  void _simulateIncomingMessage({required String text}) {
-    store.simulateIncoming(chatId: _chat.id, replyText: text);
-
-    Future.delayed(const Duration(milliseconds: 1700), () {
-      if (!mounted) return;
-      final incomingMsg = Message(
-        id: _newId(),
-        chatId: _chat.id,
-        senderId: _chat.userId,
-        text: text,
-        createdAt: DateTime.now(),
-        status: MessageStatus.delivered,
-      );
-      messageStore.addMessage(incomingMsg);
-      setState(() {});
-      _scrollToBottom();
-    });
-  }
-
   void _send() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
-    final time = store.nowHHmm();
-    final now = DateTime.now();
-
     final replyPrefix = _replyTo != null ? '↩ ${_replyTo!.text}\n' : '';
     final composed = replyPrefix.isEmpty ? text : '$replyPrefix$text';
 
-    // Supabase kullanılıyorsa
+    // Supabase ile mesaj gönder
     if (_useSupabase && chatService.currentUserId != null) {
       _sendSupabaseMessage(composed);
       return;
     }
 
-    // Mock data için eski davranış
-    final sendingMsg = Message(
-      id: _newId(),
-      chatId: _chat.id,
-      senderId: 'me',
-      text: composed,
-      createdAt: now,
-      status: MessageStatus.sending,
-    );
-
-    // Mesajı Hive'a kaydet
-    messageStore.addMessage(sendingMsg);
-
-    setState(() {
-      _replyTo = null;
-      // Clear link preview after sending
-      _inputLinkPreview = null;
-      _lastDetectedUrl = null;
-    });
-    _scrollToBottom();
-
-    store.upsertChat(
-      ChatPreview(
-        id: _chat.id,
-        userId: _chat.userId,
-        name: _chat.name,
-        lastMessage: text,
-        time: time,
-        online: store.presenceOf(_chat.userId).online,
-      ),
-      moveToTop: true,
-    );
-
-    _controller.clear();
-    FocusScope.of(context).unfocus();
-
-    // Mesaj durumunu "sent" olarak güncelle
-    Future.delayed(const Duration(milliseconds: 350), () {
-      if (!mounted) return;
-      final sentMsg = Message(
-        id: sendingMsg.id,
-        chatId: sendingMsg.chatId,
-        senderId: sendingMsg.senderId,
-        text: sendingMsg.text,
-        createdAt: sendingMsg.createdAt,
-        status: MessageStatus.sent,
-      );
-      messageStore.updateMessage(sentMsg);
-      setState(() {});
-    });
-
-    _simulateIncomingMessage(text: 'Tamam 👍');
+    // Kullanıcı giriş yapmamışsa uyarı göster
+    _toast('Mesaj göndermek için giriş yapmalısınız');
   }
 
   /// Supabase'e mesaj gönder
@@ -1854,26 +1779,15 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               if (newText.isNotEmpty && newText != m.text) {
                 Navigator.pop(context);
 
-                if (_useSupabase) {
-                  final success = await chatService.editMessage(m.id, newText);
-                  if (success) {
-                    await chatService.loadMessages(_chat.id);
-                    setState(() {
-                      _supabaseMessages = chatService.getMessages(_chat.id);
-                    });
-                    _toast('Mesaj düzenlendi');
-                  } else {
-                    _toast('Düzenleme başarısız');
-                  }
-                } else {
-                  // Mock data için local güncelleme
-                  final index = _messages.indexWhere((x) => x.id == m.id);
-                  if (index != -1) {
-                    setState(() {
-                      _messages[index] = m.copyWith(text: newText);
-                    });
-                  }
+                final success = await chatService.editMessage(m.id, newText);
+                if (success) {
+                  await chatService.loadMessages(_chat.id);
+                  setState(() {
+                    _supabaseMessages = chatService.getMessages(_chat.id);
+                  });
                   _toast('Mesaj düzenlendi');
+                } else {
+                  _toast('Düzenleme başarısız');
                 }
               }
             },
@@ -1909,21 +1823,15 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             onPressed: () async {
               Navigator.pop(context);
 
-              if (_useSupabase) {
-                final success = await chatService.deleteMessage(m.id);
-                if (success) {
-                  await chatService.loadMessages(_chat.id);
-                  setState(() {
-                    _supabaseMessages = chatService.getMessages(_chat.id);
-                  });
-                  _toast('Mesaj silindi');
-                } else {
-                  _toast('Silme başarısız');
-                }
+              final success = await chatService.deleteMessage(m.id);
+              if (success) {
+                await chatService.loadMessages(_chat.id);
+                setState(() {
+                  _supabaseMessages = chatService.getMessages(_chat.id);
+                });
+                _toast('Mesaj silindi');
               } else {
-                // Mock data için local silme
-                setState(() => _messages.removeWhere((x) => x.id == m.id));
-                _toast('Silindi');
+                _toast('Silme başarısız');
               }
             },
             child: Text('Sil', style: TextStyle(color: Colors.red)),
