@@ -52,13 +52,19 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
+  bool _renderersInitialized = false;
+  
   @override
   void initState() {
     super.initState();
-    _initRenderers();
-    _initCall();
     _setupAnimations();
+    _initializeAll();
+  }
+  
+  Future<void> _initializeAll() async {
+    await _initRenderers();
     _setupCallbacks();
+    _initCall();
   }
 
   void _setupAnimations() {
@@ -73,36 +79,63 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _initRenderers() async {
-    await _localRenderer.initialize();
-    await _remoteRenderer.initialize();
+    try {
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+      _renderersInitialized = true;
+      debugPrint('CallScreen: ✅ Renderers initialized');
+    } catch (e) {
+      debugPrint('CallScreen: ❌ Error initializing renderers: $e');
+    }
   }
 
   void _setupCallbacks() {
     _webrtc.onLocalStream = (stream) {
-      setState(() {
-        _localRenderer.srcObject = stream;
-      });
+      debugPrint('CallScreen: onLocalStream callback - stream id: ${stream.id}');
+      debugPrint('CallScreen: onLocalStream - video tracks: ${stream.getVideoTracks().length}');
+      if (mounted && _renderersInitialized) {
+        setState(() {
+          _localRenderer.srcObject = stream;
+        });
+        debugPrint('CallScreen: ✅ Local stream set to renderer');
+      } else {
+        debugPrint('CallScreen: ⚠️ Cannot set local stream - mounted: $mounted, initialized: $_renderersInitialized');
+      }
     };
 
     _webrtc.onRemoteStream = (stream) {
-      setState(() {
-        _remoteRenderer.srcObject = stream;
-        _callStatus = 'connected';
-        _startCallTimer();
-      });
+      debugPrint('CallScreen: 🎥 onRemoteStream callback - stream id: ${stream.id}');
+      debugPrint('CallScreen: onRemoteStream - video tracks: ${stream.getVideoTracks().length}');
+      debugPrint('CallScreen: onRemoteStream - audio tracks: ${stream.getAudioTracks().length}');
+      if (mounted && _renderersInitialized) {
+        setState(() {
+          _remoteRenderer.srcObject = stream;
+          _callStatus = 'connected';
+          _startCallTimer();
+        });
+        debugPrint('CallScreen: ✅ Remote stream set to renderer');
+      } else {
+        debugPrint('CallScreen: ⚠️ Cannot set remote stream - mounted: $mounted, initialized: $_renderersInitialized');
+      }
     };
 
     _webrtc.onConnectionState = (state) {
+      debugPrint('CallScreen: Connection state changed: $state');
+      if (!mounted) return;
+      
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         setState(() => _callStatus = 'connected');
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-                 state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+                 state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+                 state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         _handleCallEnded('connection_failed');
       }
     };
 
     _webrtc.onCallAccepted = () {
-      setState(() => _callStatus = 'connected');
+      if (mounted) {
+        setState(() => _callStatus = 'connected');
+      }
     };
 
     _webrtc.onCallRejected = () {
@@ -110,6 +143,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     };
 
     _webrtc.onCallEnded = (reason) {
+      debugPrint('CallScreen: onCallEnded callback - reason: $reason');
       _handleCallEnded(reason);
     };
     
@@ -257,7 +291,17 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     return '$m:$s';
   }
 
+  bool _isEnding = false;
+  
   void _handleCallEnded(String reason) {
+    // Birden fazla kez çağrılmasını önle
+    if (_isEnding) {
+      debugPrint('CallScreen: _handleCallEnded already in progress, skipping');
+      return;
+    }
+    _isEnding = true;
+    
+    debugPrint('CallScreen: _handleCallEnded called with reason: $reason');
     _callTimer?.cancel();
     
     String message;
@@ -282,10 +326,13 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     }
 
     if (mounted) {
+      debugPrint('CallScreen: Showing snackbar and popping screen');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
       Navigator.of(context).pop();
+    } else {
+      debugPrint('CallScreen: Not mounted, cannot pop');
     }
   }
 
@@ -320,10 +367,29 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    debugPrint('CallScreen: dispose called');
     _callTimer?.cancel();
     _pulseController.dispose();
-    _localRenderer.dispose();
-    _remoteRenderer.dispose();
+    
+    // Önce stream'leri temizle, sonra renderer'ları dispose et
+    try {
+      _localRenderer.srcObject = null;
+      _remoteRenderer.srcObject = null;
+    } catch (e) {
+      debugPrint('CallScreen: Error clearing renderer sources: $e');
+    }
+    
+    // Küçük bir gecikme ile dispose et (stream temizlenmesini bekle)
+    Future.delayed(const Duration(milliseconds: 100), () {
+      try {
+        _localRenderer.dispose();
+        _remoteRenderer.dispose();
+        debugPrint('CallScreen: ✅ Renderers disposed');
+      } catch (e) {
+        debugPrint('CallScreen: Error disposing renderers: $e');
+      }
+    });
+    
     super.dispose();
   }
 
@@ -361,38 +427,61 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildVideoView() {
+    debugPrint('CallScreen: Building video view - remote stream: ${_remoteRenderer.srcObject != null}');
+    
     return Stack(
       children: [
         // Remote video (full screen)
         Positioned.fill(
-          child: RTCVideoView(
-            _remoteRenderer,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-          ),
+          child: _remoteRenderer.srcObject != null
+              ? RTCVideoView(
+                  _remoteRenderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                )
+              : Container(
+                  color: Colors.black,
+                  child: const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: Colors.white),
+                        SizedBox(height: 16),
+                        Text('Video bekleniyor...', style: TextStyle(color: Colors.white70)),
+                      ],
+                    ),
+                  ),
+                ),
         ),
 
         // Local video (PIP)
-        Positioned(
-          top: MediaQuery.of(context).padding.top + 60,
-          right: 16,
-          child: GestureDetector(
-            onTap: () => _webrtc.switchCamera(),
-            child: Container(
-              width: 100,
-              height: 150,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white24, width: 2),
-              ),
-              clipBehavior: Clip.hardEdge,
-              child: RTCVideoView(
-                _localRenderer,
-                mirror: _webrtc.isFrontCamera,
-                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+        if (_localRenderer.srcObject != null)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 60,
+            right: 16,
+            child: GestureDetector(
+              onTap: () {
+                try {
+                  _webrtc.switchCamera();
+                } catch (e) {
+                  debugPrint('CallScreen: Error switching camera: $e');
+                }
+              },
+              child: Container(
+                width: 100,
+                height: 150,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white24, width: 2),
+                ),
+                clipBehavior: Clip.hardEdge,
+                child: RTCVideoView(
+                  _localRenderer,
+                  mirror: _webrtc.isFrontCamera,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                ),
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -595,8 +684,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               label: _webrtc.isMuted ? 'Aç' : 'Kapat',
               isActive: _webrtc.isMuted,
               onTap: () {
-                _webrtc.toggleMute();
-                setState(() {});
+                try {
+                  _webrtc.toggleMute();
+                  if (mounted) setState(() {});
+                } catch (e) {
+                  debugPrint('CallScreen: Error toggling mute: $e');
+                }
               },
             ),
 
@@ -609,8 +702,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 label: _webrtc.isVideoEnabled ? 'Kapat' : 'Aç',
                 isActive: !_webrtc.isVideoEnabled,
                 onTap: () {
-                  _webrtc.toggleVideo();
-                  setState(() {});
+                  try {
+                    _webrtc.toggleVideo();
+                    if (mounted) setState(() {});
+                  } catch (e) {
+                    debugPrint('CallScreen: Error toggling video: $e');
+                  }
                 },
               ),
 
@@ -628,8 +725,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               label: 'Hoparlör',
               isActive: _webrtc.isSpeakerOn,
               onTap: () {
-                _webrtc.toggleSpeaker();
-                setState(() {});
+                try {
+                  _webrtc.toggleSpeaker();
+                  if (mounted) setState(() {});
+                } catch (e) {
+                  debugPrint('CallScreen: Error toggling speaker: $e');
+                }
               },
             ),
 
@@ -639,8 +740,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 icon: Icons.flip_camera_ios,
                 label: 'Çevir',
                 onTap: () async {
-                  await _webrtc.switchCamera();
-                  setState(() {});
+                  try {
+                    await _webrtc.switchCamera();
+                    if (mounted) setState(() {});
+                  } catch (e) {
+                    debugPrint('CallScreen: Error switching camera: $e');
+                  }
                 },
               ),
           ],

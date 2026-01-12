@@ -120,22 +120,26 @@ class WebRTCService extends ChangeNotifier {
       final callData = await _supabase.client.from('calls').insert({
         'caller_id': currentUserId,
         'callee_id': calleeId,
-        'type': isVideo ? 'video' : 'voice', // DB'de 'type' kolonu var, default 'voice'
+        'type': isVideo ? 'video' : 'voice',
         'status': 'ringing',
       }).select().single();
 
       _currentCallId = callData['id'] as String;
-      debugPrint('WebRTC: Call created: $_currentCallId');
+      debugPrint('WebRTC: 📞 Call created: $_currentCallId (type: ${isVideo ? "video" : "voice"})');
 
       // 2. Local media stream al
+      debugPrint('WebRTC: Requesting media...');
       await _getUserMedia();
+      debugPrint('WebRTC: Media ready');
 
       // 3. Peer connection oluştur
       await _createPeerConnection();
 
       // 4. Offer oluştur ve gönder
+      debugPrint('WebRTC: Creating offer...');
       final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);
+      debugPrint('WebRTC: ✅ Offer created (${offer.sdp?.length ?? 0} bytes)');
 
       // 5. Offer'ı Supabase'e kaydet
       await _supabase.client.from('calls').update({
@@ -143,9 +147,10 @@ class WebRTCService extends ChangeNotifier {
         'ringing_at': DateTime.now().toIso8601String(),
       }).eq('id', _currentCallId!);
 
-      debugPrint('WebRTC: Offer sent');
+      debugPrint('WebRTC: ✅ Offer sent to DB');
 
       // 6. Signaling dinle
+      debugPrint('WebRTC: Subscribing to call updates and ICE candidates...');
       _subscribeToCallUpdates();
       _subscribeToIceCandidates();
 
@@ -221,9 +226,10 @@ class WebRTCService extends ChangeNotifier {
       _isCaller = false;
 
       // 1. Local media stream al
-      debugPrint('WebRTC: Getting user media...');
+      debugPrint('WebRTC: 📞 Incoming call from: $callerId, type: ${isVideo ? "video" : "voice"}');
+      debugPrint('WebRTC: Requesting media...');
       await _getUserMedia();
-      debugPrint('WebRTC: User media acquired');
+      debugPrint('WebRTC: Media ready');
 
       // 2. Peer connection oluştur
       debugPrint('WebRTC: Creating peer connection...');
@@ -285,11 +291,17 @@ class WebRTCService extends ChangeNotifier {
   // ARAMA SONLANDIRMA
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Aramayı sonlandır
+  /// Aramayı sonlandır (kullanıcı tarafından)
   Future<void> endCall({String reason = 'ended'}) async {
-    debugPrint('WebRTC: Ending call - reason: $reason');
+    if (_isEnding) {
+      debugPrint('WebRTC: endCall already in progress, skipping');
+      return;
+    }
+    _isEnding = true;
+    
+    debugPrint('WebRTC: 🔴 Ending call - reason: $reason');
 
-    // Supabase'de güncelle
+    // Supabase'de güncelle - sadece biz sonlandırıyorsak
     if (_currentCallId != null) {
       try {
         await _supabase.client.from('calls').update({
@@ -297,6 +309,7 @@ class WebRTCService extends ChangeNotifier {
           'ended_at': DateTime.now().toIso8601String(),
           'end_reason': reason,
         }).eq('id', _currentCallId!);
+        debugPrint('WebRTC: Call status updated in DB');
       } catch (e) {
         debugPrint('WebRTC: Error updating call status: $e');
       }
@@ -307,6 +320,8 @@ class WebRTCService extends ChangeNotifier {
     
     onCallEnded?.call(reason);
     notifyListeners();
+    
+    _isEnding = false;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -315,50 +330,77 @@ class WebRTCService extends ChangeNotifier {
 
   /// Mikrofonu aç/kapat
   void toggleMute() {
-    if (_localStream == null) return;
+    if (_localStream == null) {
+      debugPrint('WebRTC: toggleMute - no local stream');
+      return;
+    }
 
-    _isMuted = !_isMuted;
-    _localStream!.getAudioTracks().forEach((track) {
-      track.enabled = !_isMuted;
-    });
-    
-    debugPrint('WebRTC: Mute toggled: $_isMuted');
-    notifyListeners();
+    try {
+      _isMuted = !_isMuted;
+      final audioTracks = _localStream!.getAudioTracks();
+      debugPrint('WebRTC: Audio tracks count: ${audioTracks.length}');
+      for (final track in audioTracks) {
+        track.enabled = !_isMuted;
+      }
+      debugPrint('WebRTC: Mute toggled: $_isMuted');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('WebRTC: Error toggling mute: $e');
+    }
   }
 
   /// Hoparlörü aç/kapat
   void toggleSpeaker() {
-    _isSpeakerOn = !_isSpeakerOn;
-    Helper.setSpeakerphoneOn(_isSpeakerOn);
-    
-    debugPrint('WebRTC: Speaker toggled: $_isSpeakerOn');
-    notifyListeners();
+    try {
+      _isSpeakerOn = !_isSpeakerOn;
+      Helper.setSpeakerphoneOn(_isSpeakerOn);
+      debugPrint('WebRTC: Speaker toggled: $_isSpeakerOn');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('WebRTC: Error toggling speaker: $e');
+    }
   }
 
   /// Videoyu aç/kapat
   void toggleVideo() {
-    if (_localStream == null || !_isVideoCall) return;
+    if (_localStream == null || !_isVideoCall) {
+      debugPrint('WebRTC: toggleVideo - no local stream or not video call');
+      return;
+    }
 
-    _isVideoEnabled = !_isVideoEnabled;
-    _localStream!.getVideoTracks().forEach((track) {
-      track.enabled = _isVideoEnabled;
-    });
-    
-    debugPrint('WebRTC: Video toggled: $_isVideoEnabled');
-    notifyListeners();
+    try {
+      _isVideoEnabled = !_isVideoEnabled;
+      for (final track in _localStream!.getVideoTracks()) {
+        track.enabled = _isVideoEnabled;
+      }
+      debugPrint('WebRTC: Video toggled: $_isVideoEnabled');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('WebRTC: Error toggling video: $e');
+    }
   }
 
   /// Kamerayı değiştir (ön/arka)
   Future<void> switchCamera() async {
-    if (_localStream == null || !_isVideoCall) return;
+    if (_localStream == null || !_isVideoCall) {
+      debugPrint('WebRTC: switchCamera - no local stream or not video call');
+      return;
+    }
 
-    _isFrontCamera = !_isFrontCamera;
-    await Helper.switchCamera(
-      _localStream!.getVideoTracks().first,
-    );
-    
-    debugPrint('WebRTC: Camera switched: ${_isFrontCamera ? 'front' : 'back'}');
-    notifyListeners();
+    try {
+      final videoTracks = _localStream!.getVideoTracks();
+      if (videoTracks.isEmpty) {
+        debugPrint('WebRTC: No video tracks to switch');
+        return;
+      }
+      
+      _isFrontCamera = !_isFrontCamera;
+      await Helper.switchCamera(videoTracks.first);
+      debugPrint('WebRTC: Camera switched: ${_isFrontCamera ? 'front' : 'back'}');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('WebRTC: Error switching camera: $e');
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -404,7 +446,14 @@ class WebRTCService extends ChangeNotifier {
   /// Local media stream al
   Future<void> _getUserMedia() async {
     final constraints = {
-      'audio': true,
+      'audio': {
+        'mandatory': {
+          'googEchoCancellation': true,
+          'googNoiseSuppression': true,
+          'googAutoGainControl': true,
+        },
+        'optional': [],
+      },
       'video': _isVideoCall
           ? {
               'facingMode': 'user',
@@ -414,10 +463,22 @@ class WebRTCService extends ChangeNotifier {
           : false,
     };
 
-    _localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    onLocalStream?.call(_localStream!);
-    
-    debugPrint('WebRTC: Local stream acquired');
+    try {
+      _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      debugPrint('WebRTC: ✅ Local stream acquired');
+      debugPrint('WebRTC: Audio tracks: ${_localStream?.getAudioTracks().length ?? 0}');
+      debugPrint('WebRTC: Video tracks: ${_localStream?.getVideoTracks().length ?? 0}');
+      
+      // Tracks kontrol et
+      for (final track in _localStream?.getTracks() ?? []) {
+        debugPrint('WebRTC: Track - kind: ${track.kind}, id: ${track.id}, enabled: ${track.enabled}');
+      }
+      
+      onLocalStream?.call(_localStream!);
+    } catch (e) {
+      debugPrint('WebRTC: ❌ Error getting user media: $e');
+      rethrow;
+    }
   }
 
   /// Peer connection oluştur
@@ -426,19 +487,54 @@ class WebRTCService extends ChangeNotifier {
     _peerConnection = await createPeerConnection(_iceServers);
 
     // Local tracks ekle
-    _localStream?.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-      debugPrint('WebRTC: Added local track: ${track.kind}');
-    });
+    debugPrint('WebRTC: Local stream tracks: ${_localStream?.getTracks().length ?? 0}');
+    if (_localStream != null) {
+      for (final track in _localStream!.getTracks()) {
+        try {
+          await _peerConnection!.addTrack(track, _localStream!);
+          debugPrint('WebRTC: ✅ Added local ${track.kind} track');
+        } catch (e) {
+          debugPrint('WebRTC: ❌ Error adding track ${track.kind}: $e');
+        }
+      }
+    } else {
+      debugPrint('WebRTC: ⚠️ Local stream is NULL!');
+    }
 
-    // Remote stream handler
+    // Remote stream handler (yeni API)
     _peerConnection!.onTrack = (event) {
-      debugPrint('WebRTC: onTrack event - streams: ${event.streams.length}');
+      debugPrint('WebRTC: 🎵 onTrack event received!');
+      debugPrint('WebRTC: onTrack - kind: ${event.track.kind}, track enabled: ${event.track.enabled}');
+      debugPrint('WebRTC: onTrack - streams: ${event.streams.length}');
+      
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
+        debugPrint('WebRTC: ✅ Remote stream assigned, id: ${_remoteStream?.id}');
+        debugPrint('WebRTC: ✅ Remote stream tracks: ${_remoteStream?.getTracks().map((t) => "${t.kind}(${t.id})").join(", ")}');
+        
         onRemoteStream?.call(_remoteStream!);
-        debugPrint('WebRTC: Remote stream received - tracks: ${_remoteStream?.getTracks().length}');
+        debugPrint('WebRTC: ✅ onRemoteStream callback called');
+      } else {
+        // Stream yoksa track'i manuel olarak bir stream'e ekle
+        debugPrint('WebRTC: ⚠️ onTrack but no streams in event, creating stream manually');
+        _remoteStream ??= _peerConnection!.getRemoteStreams().firstOrNull;
+        if (_remoteStream != null) {
+          onRemoteStream?.call(_remoteStream!);
+        }
       }
+    };
+    
+    // Remote stream handler (eski API - fallback)
+    // ignore: deprecated_member_use
+    _peerConnection!.onAddStream = (stream) {
+      debugPrint('WebRTC: 🎵 onAddStream event received! (legacy API)');
+      debugPrint('WebRTC: onAddStream - stream id: ${stream.id}');
+      debugPrint('WebRTC: onAddStream - video tracks: ${stream.getVideoTracks().length}');
+      debugPrint('WebRTC: onAddStream - audio tracks: ${stream.getAudioTracks().length}');
+      
+      _remoteStream = stream;
+      onRemoteStream?.call(_remoteStream!);
+      debugPrint('WebRTC: ✅ Remote stream set via onAddStream');
     };
 
     // ICE candidate handler
@@ -495,10 +591,13 @@ class WebRTCService extends ChangeNotifier {
     }
   }
 
+  bool _isEnding = false;
+  
   /// Call updates dinle
   void _subscribeToCallUpdates() {
     if (_currentCallId == null) return;
 
+    debugPrint('WebRTC: Subscribing to call updates for: $_currentCallId');
     _callChannel = _supabase.client.channel('call_$_currentCallId');
     
     _callChannel!
@@ -515,7 +614,7 @@ class WebRTCService extends ChangeNotifier {
           final call = payload.newRecord;
           final status = call['status'] as String?;
           
-          debugPrint('WebRTC: Call update - status: $status');
+          debugPrint('WebRTC: 📢 Call update received - status: $status');
 
           if (status == 'connected' && _isCaller) {
             // Caller: Answer geldi - timeout iptal et
@@ -526,23 +625,48 @@ class WebRTCService extends ChangeNotifier {
                 RTCSessionDescription(answerSdp, 'answer'),
               );
               onCallAccepted?.call();
-              debugPrint('WebRTC: Answer received and set');
+              debugPrint('WebRTC: ✅ Answer received and set');
             }
           } else if (status == 'rejected') {
+            debugPrint('WebRTC: 📢 Call was rejected');
             _cancelCallTimeout();
             onCallRejected?.call();
-            await endCall(reason: 'rejected');
+            await _handleRemoteCallEnded('rejected');
           } else if (status == 'ended') {
+            debugPrint('WebRTC: 📢 Call was ended by remote');
             _cancelCallTimeout();
             final endReason = call['end_reason'] as String? ?? 'ended';
-            await endCall(reason: endReason);
+            await _handleRemoteCallEnded(endReason);
           } else if (status == 'missed') {
+            debugPrint('WebRTC: 📢 Call was marked as missed');
             _cancelCallTimeout();
-            await endCall(reason: 'no_answer');
+            await _handleRemoteCallEnded('no_answer');
           }
         },
       )
-      .subscribe();
+      .subscribe((status, error) {
+        debugPrint('WebRTC: Call updates subscription status: $status, error: $error');
+      });
+  }
+
+  /// Karşı taraf aramayı kapattığında
+  Future<void> _handleRemoteCallEnded(String reason) async {
+    if (_isEnding) {
+      debugPrint('WebRTC: _handleRemoteCallEnded already in progress, skipping');
+      return;
+    }
+    _isEnding = true;
+    
+    debugPrint('WebRTC: Remote ended call with reason: $reason');
+    
+    // DB güncellemesi YAPMA - zaten karşı taraf güncelledi
+    // Sadece cleanup yap
+    await _cleanup();
+    
+    onCallEnded?.call(reason);
+    notifyListeners();
+    
+    _isEnding = false;
   }
 
   /// ICE candidates dinle
