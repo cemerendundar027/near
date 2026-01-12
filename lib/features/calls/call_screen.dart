@@ -125,11 +125,11 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         setState(() => _callStatus = 'connected');
-      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-                 state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-                 state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Sadece FAILED durumunda çık - DISCONNECTED geçici olabilir
         _handleCallEnded('connection_failed');
       }
+      // DISCONNECTED ve CLOSED durumlarında bekle - WebRTC service handle eder
     };
 
     _webrtc.onCallAccepted = () {

@@ -40,6 +40,7 @@ class WebRTCService extends ChangeNotifier {
   bool _isSpeakerOn = false;
   bool _isVideoEnabled = true;
   bool _isFrontCamera = true;
+  bool _isEnding = false;  // Arama sonlandırılıyor mu
   
   // Callbacks
   Function(MediaStream)? onLocalStream;
@@ -106,9 +107,10 @@ class WebRTCService extends ChangeNotifier {
       return null;
     }
 
-    if (isInCall) {
-      debugPrint('WebRTC: Already in a call');
-      return null;
+    // Önceki arama state'ini kontrol et ve temizle
+    if (isInCall || _isEnding) {
+      debugPrint('WebRTC: Previous call state detected, cleaning up first...');
+      await _forceCleanup();
     }
 
     try {
@@ -218,6 +220,12 @@ class WebRTCService extends ChangeNotifier {
 
     debugPrint('WebRTC: acceptCall started - callId: $callId, callerId: $callerId');
     debugPrint('WebRTC: offerSdp length: ${offerSdp.length}');
+
+    // Önceki arama state'ini kontrol et ve temizle
+    if (isInCall || _isEnding) {
+      debugPrint('WebRTC: Previous call state detected, cleaning up first...');
+      await _forceCleanup();
+    }
 
     try {
       _currentCallId = callId;
@@ -564,11 +572,17 @@ class WebRTCService extends ChangeNotifier {
         // Bağlantı kuruldu
         debugPrint('WebRTC: ✅ Connection established!');
         _updateCallConnected();
-      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-                 state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
-        // Bağlantı kesildi
-        debugPrint('WebRTC: ❌ Connection failed or disconnected');
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Sadece FAILED durumunda kapat - DISCONNECTED geçici olabilir
+        debugPrint('WebRTC: ❌ Connection FAILED');
         endCall(reason: 'connection_failed');
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        // Disconnected - 5 saniye bekle, belki yeniden bağlanır
+        debugPrint('WebRTC: ⚠️ Connection disconnected - waiting for reconnection...');
+        // Şimdilik bir şey yapma, ICE reconnection'a izin ver
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        // Closed - peer connection kapatıldı
+        debugPrint('WebRTC: Connection closed');
       }
     };
 
@@ -591,8 +605,6 @@ class WebRTCService extends ChangeNotifier {
     }
   }
 
-  bool _isEnding = false;
-  
   /// Call updates dinle
   void _subscribeToCallUpdates() {
     if (_currentCallId == null) return;
@@ -729,27 +741,67 @@ class WebRTCService extends ChangeNotifier {
     }
   }
 
+  /// Force cleanup - önceki aramadan kalan state'i zorla temizle
+  Future<void> _forceCleanup() async {
+    debugPrint('WebRTC: Force cleanup started');
+    _isEnding = false;  // Reset flag
+    await _cleanup();
+    // Kısa bir bekleme - kaynakların serbest kalması için
+    await Future.delayed(const Duration(milliseconds: 200));
+    debugPrint('WebRTC: Force cleanup completed');
+  }
+
   /// Cleanup
   Future<void> _cleanup() async {
+    debugPrint('WebRTC: Cleanup started');
+    
     // Timer iptal
     _cancelCallTimeout();
     
-    // Channels unsubscribe
-    await _callChannel?.unsubscribe();
-    await _iceCandidateChannel?.unsubscribe();
+    // Channels unsubscribe - try-catch ile
+    try {
+      await _callChannel?.unsubscribe();
+    } catch (e) {
+      debugPrint('WebRTC: Error unsubscribing call channel: $e');
+    }
+    try {
+      await _iceCandidateChannel?.unsubscribe();
+    } catch (e) {
+      debugPrint('WebRTC: Error unsubscribing ICE channel: $e');
+    }
     _callChannel = null;
     _iceCandidateChannel = null;
 
-    // Media streams dispose
-    _localStream?.getTracks().forEach((track) => track.stop());
-    _remoteStream?.getTracks().forEach((track) => track.stop());
-    await _localStream?.dispose();
-    await _remoteStream?.dispose();
+    // Media streams dispose - try-catch ile
+    try {
+      _localStream?.getTracks().forEach((track) {
+        try {
+          track.stop();
+        } catch (e) {
+          debugPrint('WebRTC: Error stopping local track: $e');
+        }
+      });
+      _remoteStream?.getTracks().forEach((track) {
+        try {
+          track.stop();
+        } catch (e) {
+          debugPrint('WebRTC: Error stopping remote track: $e');
+        }
+      });
+      await _localStream?.dispose();
+      await _remoteStream?.dispose();
+    } catch (e) {
+      debugPrint('WebRTC: Error disposing streams: $e');
+    }
     _localStream = null;
     _remoteStream = null;
 
-    // Peer connection close
-    await _peerConnection?.close();
+    // Peer connection close - try-catch ile
+    try {
+      await _peerConnection?.close();
+    } catch (e) {
+      debugPrint('WebRTC: Error closing peer connection: $e');
+    }
     _peerConnection = null;
 
     // State reset
@@ -761,6 +813,7 @@ class WebRTCService extends ChangeNotifier {
     _isSpeakerOn = false;
     _isVideoEnabled = true;
     _isFrontCamera = true;
+    // _isEnding burada sıfırlanMAMALI - çağıran fonksiyon sıfırlar
 
     debugPrint('WebRTC: Cleanup completed');
   }

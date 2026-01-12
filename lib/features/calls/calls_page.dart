@@ -149,11 +149,12 @@ class _CallsPageState extends State<CallsPage> {
               title: Text(
                 'Aramalar',
                 style: TextStyle(
-                  color: cs.onSurface,
+                  color: isDark ? Colors.white : Colors.black,
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              background: Container(color: isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF2F2F7)),
             ),
             actions: [
               if (_calls.isNotEmpty)
