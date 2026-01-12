@@ -304,7 +304,7 @@ class _CallsPageState extends State<CallsPage> {
     final type = call['type'] as String? ?? 'voice';
     final isVideo = type == 'video';
     final createdAt = DateTime.tryParse(call['created_at'] ?? '');
-    final duration = call['duration'] as int?;
+    final duration = call['duration_seconds'] as int?;
     final callId = call['id'] as String;
 
     // İkon ve renk belirle
@@ -455,7 +455,7 @@ class _CallsPageState extends State<CallsPage> {
   void _showCallDetails(Map<String, dynamic> call, String name, String? avatarUrl, String otherUserId) {
     final type = call['type'] as String? ?? 'voice';
     final createdAt = DateTime.tryParse(call['created_at'] ?? '');
-    final duration = call['duration'] as int?;
+    final duration = call['duration_seconds'] as int?;
     final userId = _chatService.currentUserId;
     final isOutgoing = call['caller_id'] == userId;
     final isDark = Theme.of(context).brightness == Brightness.dark;

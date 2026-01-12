@@ -141,7 +141,7 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
     final type = call['type'] as String? ?? 'voice';
     final isVideo = type == 'video';
     final createdAt = DateTime.tryParse(call['created_at'] ?? '');
-    final duration = call['duration'] as int?;
+    final duration = call['duration_seconds'] as int?;
 
     // İkon ve renk belirle
     IconData statusIcon;
@@ -283,7 +283,7 @@ class _CallHistoryPageState extends State<CallHistoryPage> {
   void _showCallDetails(Map<String, dynamic> call, String name, String? avatarUrl) {
     final type = call['type'] as String? ?? 'voice';
     final createdAt = DateTime.tryParse(call['created_at'] ?? '');
-    final duration = call['duration'] as int?;
+    final duration = call['duration_seconds'] as int?;
     final userId = _chatService.currentUserId;
     final isOutgoing = call['caller_id'] == userId;
 
