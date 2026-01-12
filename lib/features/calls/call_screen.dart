@@ -112,11 +112,15 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _webrtc.onCallEnded = (reason) {
       _handleCallEnded(reason);
     };
+    
+    _webrtc.onCallTimeout = () {
+      _handleCallEnded('no_answer');
+    };
   }
 
   Future<void> _initCall() async {
     debugPrint('CallScreen: _initCall started');
-    debugPrint('CallScreen: remoteUserId=${widget.remoteUserId}, deepLinkUserId=${widget.deepLinkUserId}');
+    debugPrint('CallScreen: callId=${widget.callId}, remoteUserId=${widget.remoteUserId}, deepLinkUserId=${widget.deepLinkUserId}');
     debugPrint('CallScreen: isVideo=${widget.isVideo}, isVideoCall=${widget.isVideoCall}, isIncoming=${widget.isIncoming}');
     
     // Remote user bilgisi al
@@ -137,9 +141,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     await _loadRemoteUserInfo(remoteId);
 
     if (widget.isIncoming) {
-      // Gelen arama - bekle
-      debugPrint('CallScreen: Incoming call mode');
-      setState(() => _callStatus = 'incoming');
+      // Gelen arama - kullanıcı zaten CallKit'ten kabul etti, aramayı başlat
+      debugPrint('CallScreen: Incoming call mode - accepting call');
+      setState(() => _callStatus = 'connecting');
+      
+      // Aramayı kabul et
+      await _acceptIncomingCall();
     } else {
       // Giden arama - başlat
       debugPrint('CallScreen: Outgoing call mode - starting call');
@@ -170,6 +177,51 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         debugPrint('CallScreen: No target userId, ending call');
         _handleCallEnded('error');
       }
+    }
+  }
+
+  /// Gelen aramayı kabul et
+  Future<void> _acceptIncomingCall() async {
+    final callId = widget.callId;
+    final callerId = widget.remoteUserId ?? widget.deepLinkUserId;
+    final isVideo = widget.isVideo || widget.isVideoCall;
+    
+    if (callId == null || callerId == null) {
+      debugPrint('CallScreen: Missing callId or callerId for incoming call');
+      _handleCallEnded('error');
+      return;
+    }
+    
+    // DB'den offer_sdp'yi çek
+    try {
+      final call = await _chatService.supabase
+          .from('calls')
+          .select('offer_sdp')
+          .eq('id', callId)
+          .single();
+      
+      final offerSdp = call['offer_sdp'] as String?;
+      if (offerSdp == null) {
+        debugPrint('CallScreen: No offer_sdp found for call');
+        _handleCallEnded('error');
+        return;
+      }
+      
+      debugPrint('CallScreen: Accepting call with offer_sdp');
+      final success = await _webrtc.acceptCall(
+        callId: callId,
+        callerId: callerId,
+        isVideo: isVideo,
+        offerSdp: offerSdp,
+      );
+      
+      if (!success) {
+        debugPrint('CallScreen: Failed to accept call');
+        _handleCallEnded('error');
+      }
+    } catch (e) {
+      debugPrint('CallScreen: Error accepting call: $e');
+      _handleCallEnded('error');
     }
   }
 
@@ -278,6 +330,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final isVideo = widget.isVideo || widget.isVideoCall;
+    
+    debugPrint('CallScreen: BUILD called - status=$_callStatus, isVideo=$isVideo, showControls=$_showControls');
+    debugPrint('CallScreen: remoteUserName=$_remoteUserName, remoteUserAvatar=$_remoteUserAvatar');
 
     return Scaffold(
       backgroundColor: Colors.black,

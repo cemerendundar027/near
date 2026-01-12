@@ -41,6 +41,9 @@ class ChatService extends ChangeNotifier {
   int get totalUnreadCount => _unreadCounts.values.fold(0, (a, b) => a + b);
 
   String? get currentUserId => _supabase.currentUser?.id;
+  
+  /// Supabase client'a erişim (gerekli durumlarda)
+  SupabaseClient get supabase => _supabase.client;
 
   /// Read receipts cache'ini güncelle (privacy ayarı değiştiğinde çağrılır)
   void updateReadReceiptsCache(bool enabled) {

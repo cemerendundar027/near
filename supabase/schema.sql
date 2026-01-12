@@ -147,22 +147,43 @@ CREATE TABLE IF NOT EXISTS story_views (
   UNIQUE(story_id, viewer_id)
 );
 
--- 9. CALLS
+-- 9. CALLS (WebRTC 1-1 aramalar için güncellenmiş)
 CREATE TABLE IF NOT EXISTS calls (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   chat_id UUID REFERENCES chats(id),
   caller_id UUID REFERENCES profiles(id),
-  type TEXT DEFAULT 'voice',
-  status TEXT DEFAULT 'initiated',
+  callee_id UUID REFERENCES profiles(id),  -- Aranan kişi
+  type TEXT DEFAULT 'voice' CHECK (type IN ('voice', 'video')),
+  status TEXT DEFAULT 'ringing' CHECK (status IN ('ringing', 'connected', 'ended', 'rejected', 'missed', 'busy')),
+  offer_sdp TEXT,        -- WebRTC offer SDP
+  answer_sdp TEXT,       -- WebRTC answer SDP
+  ringing_at TIMESTAMPTZ,
+  accepted_at TIMESTAMPTZ,
+  connected_at TIMESTAMPTZ,
   started_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,
+  end_reason TEXT,       -- ended, rejected, missed, busy, error
   duration INTEGER,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS calls_chat_idx ON calls(chat_id);
 CREATE INDEX IF NOT EXISTS calls_caller_idx ON calls(caller_id);
+CREATE INDEX IF NOT EXISTS calls_callee_idx ON calls(callee_id);
+CREATE INDEX IF NOT EXISTS calls_status_idx ON calls(status);
 
--- 10. PUSH_TOKENS
+-- 10. ICE_CANDIDATES (WebRTC ICE candidate exchange)
+CREATE TABLE IF NOT EXISTS ice_candidates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  call_id UUID REFERENCES calls(id) ON DELETE CASCADE,
+  sender_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  candidate TEXT NOT NULL,
+  sdp_mid TEXT,
+  sdp_m_line_index INTEGER,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ice_candidates_call_idx ON ice_candidates(call_id);
+
+-- 11. PUSH_TOKENS
 CREATE TABLE IF NOT EXISTS push_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,

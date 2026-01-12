@@ -77,22 +77,28 @@ class _NearAppState extends State<NearApp> {
     // Heartbeat'i başlat (uygulama açıldığında online ol)
     _lifecycleObserver.startHeartbeat();
     
-    // NOT: Gelen arama callback'leri şimdilik devre dışı
-    // _setupIncomingCallHandlers();
+    // Gelen arama callback'lerini kur
+    _setupIncomingCallHandlers();
   }
 
   void _setupIncomingCallHandlers() {
     final callHandler = IncomingCallHandler.instance;
     
     // Gelen arama bildirimi kabul edildiğinde
-    callHandler.onCallAccepted = (callId) {
-      debugPrint('NearApp: Call accepted: $callId');
+    callHandler.onCallAccepted = (callData) {
+      final callId = callData['id'] as String;
+      final callerId = callData['caller_id'] as String;
+      final isVideo = callData['is_video'] == true || callData['type'] == 'video';
+      
+      debugPrint('NearApp: Call accepted: $callId from $callerId');
+      
       // Sadece kullanıcı giriş yaptıysa ve ana ekrandaysa yönlendir
       final currentLocation = _router.routerDelegate.currentConfiguration.fullPath;
       if (currentLocation != '/splash' && 
           currentLocation != '/auth' && 
           currentLocation != '/onboarding') {
-        _router.push('/call/$callId?video=false&incoming=true');
+        // callerId'yi userId olarak geç, callId'yi query param olarak ekle
+        _router.push('/call/$callerId?video=$isVideo&incoming=true&callId=$callId');
       }
     };
     
@@ -170,7 +176,7 @@ class _NearAppState extends State<NearApp> {
               },
             ),
 
-            // Call screen - supports deep link: near://call/{userId}?video=true
+            // Call screen - supports deep link: near://call/{userId}?video=true&incoming=false&callId=xxx
             GoRoute(
               path: 'call/:userId',
               name: 'call',
@@ -178,9 +184,14 @@ class _NearAppState extends State<NearApp> {
                 final userId = state.pathParameters['userId'];
                 final isVideo =
                     state.uri.queryParameters['video'] == 'true';
+                final isIncoming =
+                    state.uri.queryParameters['incoming'] == 'true';
+                final callId = state.uri.queryParameters['callId'];
                 return CallScreen(
+                  callId: callId,
                   deepLinkUserId: userId,
                   isVideoCall: isVideo,
+                  isIncoming: isIncoming,
                 );
               },
             ),

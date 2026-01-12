@@ -61,12 +61,16 @@ void main() async {
   // Ağ durumu servisini başlat
   await NetworkService.instance.init();
   
-  // NOT: IncomingCallHandler şimdilik devre dışı - sorunlar giderilince aktifleştirilecek
-  // try {
-  //   await IncomingCallHandler.instance.initialize();
-  // } catch (e) {
-  //   debugPrint('IncomingCallHandler init error: $e');
-  // }
+  // Gelen arama handler'ını başlat (sadece kullanıcı giriş yaptıysa)
+  try {
+    final currentUser = SupabaseService.instance.client.auth.currentUser;
+    if (currentUser != null) {
+      await IncomingCallHandler.instance.initialize();
+      debugPrint('IncomingCallHandler: Started for user ${currentUser.id}');
+    }
+  } catch (e) {
+    debugPrint('IncomingCallHandler init error: $e');
+  }
   
   runApp(const NearApp());
 }

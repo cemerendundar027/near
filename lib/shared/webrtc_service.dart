@@ -11,6 +11,7 @@ import 'supabase_service.dart';
 /// - 1-1 görüntülü arama
 /// - ICE candidate exchange
 /// - Supabase Realtime signaling
+/// - Call timeout (45 saniye)
 class WebRTCService extends ChangeNotifier {
   WebRTCService._();
   static final instance = WebRTCService._();
@@ -25,6 +26,10 @@ class WebRTCService extends ChangeNotifier {
   // Realtime channels
   RealtimeChannel? _callChannel;
   RealtimeChannel? _iceCandidateChannel;
+  
+  // Call timeout
+  Timer? _callTimeoutTimer;
+  static const int _callTimeoutSeconds = 45; // 45 saniye sonra cevapsız
   
   // Call state
   String? _currentCallId;
@@ -43,6 +48,7 @@ class WebRTCService extends ChangeNotifier {
   Function(String)? onCallEnded;
   Function()? onCallAccepted;
   Function()? onCallRejected;
+  Function()? onCallTimeout; // Cevapsız arama callback
 
   // Getters
   String? get currentCallId => _currentCallId;
@@ -65,12 +71,24 @@ class WebRTCService extends ChangeNotifier {
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
-      // Metered.ca TURN (500GB/ay ücretsiz) - Credentials sonra eklenecek
-      // {
-      //   'urls': 'turn:global.relay.metered.ca:80',
-      //   'username': 'YOUR_USERNAME',
-      //   'credential': 'YOUR_CREDENTIAL',
-      // },
+      {'urls': 'stun:stun3.l.google.com:19302'},
+      {'urls': 'stun:stun4.l.google.com:19302'},
+      // OpenRelay TURN (ücretsiz)
+      {
+        'urls': 'turn:openrelay.metered.ca:80',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:443',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
+      {
+        'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
     ],
   };
 
@@ -131,6 +149,9 @@ class WebRTCService extends ChangeNotifier {
       _subscribeToCallUpdates();
       _subscribeToIceCandidates();
 
+      // 7. Timeout başlat (45 saniye sonra cevapsız)
+      _startCallTimeout();
+
       notifyListeners();
       return _currentCallId;
     } catch (e) {
@@ -138,6 +159,43 @@ class WebRTCService extends ChangeNotifier {
       await endCall(reason: 'error');
       return null;
     }
+  }
+
+  /// Call timeout başlat (arayan için)
+  void _startCallTimeout() {
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = Timer(Duration(seconds: _callTimeoutSeconds), () {
+      if (_isCaller && _currentCallId != null) {
+        debugPrint('WebRTC: Call timeout - no answer');
+        _handleCallTimeout();
+      }
+    });
+  }
+
+  /// Timeout'u iptal et (arama kabul edildiğinde)
+  void _cancelCallTimeout() {
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = null;
+  }
+
+  /// Cevapsız arama işle
+  Future<void> _handleCallTimeout() async {
+    if (_currentCallId == null) return;
+
+    try {
+      await _supabase.client.from('calls').update({
+        'status': 'missed',
+        'ended_at': DateTime.now().toIso8601String(),
+        'end_reason': 'no_answer',
+      }).eq('id', _currentCallId!);
+
+      debugPrint('WebRTC: Call marked as missed');
+    } catch (e) {
+      debugPrint('WebRTC: Error marking call as missed: $e');
+    }
+
+    onCallTimeout?.call();
+    await endCall(reason: 'no_answer');
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -153,6 +211,9 @@ class WebRTCService extends ChangeNotifier {
   }) async {
     if (currentUserId == null) return false;
 
+    debugPrint('WebRTC: acceptCall started - callId: $callId, callerId: $callerId');
+    debugPrint('WebRTC: offerSdp length: ${offerSdp.length}');
+
     try {
       _currentCallId = callId;
       _remoteUserId = callerId;
@@ -160,28 +221,37 @@ class WebRTCService extends ChangeNotifier {
       _isCaller = false;
 
       // 1. Local media stream al
+      debugPrint('WebRTC: Getting user media...');
       await _getUserMedia();
+      debugPrint('WebRTC: User media acquired');
 
       // 2. Peer connection oluştur
+      debugPrint('WebRTC: Creating peer connection...');
       await _createPeerConnection();
+      debugPrint('WebRTC: Peer connection created');
 
       // 3. Remote offer'ı set et
+      debugPrint('WebRTC: Setting remote description (offer)...');
       await _peerConnection!.setRemoteDescription(
         RTCSessionDescription(offerSdp, 'offer'),
       );
+      debugPrint('WebRTC: Remote description set');
 
       // 4. Answer oluştur
+      debugPrint('WebRTC: Creating answer...');
       final answer = await _peerConnection!.createAnswer();
       await _peerConnection!.setLocalDescription(answer);
+      debugPrint('WebRTC: Local description (answer) set');
 
       // 5. Answer'ı Supabase'e kaydet
+      debugPrint('WebRTC: Saving answer to Supabase...');
       await _supabase.client.from('calls').update({
         'answer_sdp': answer.sdp,
         'status': 'connected',
         'accepted_at': DateTime.now().toIso8601String(),
       }).eq('id', callId);
 
-      debugPrint('WebRTC: Answer sent');
+      debugPrint('WebRTC: Answer sent to Supabase');
 
       // 6. Signaling dinle
       _subscribeToCallUpdates();
@@ -352,27 +422,41 @@ class WebRTCService extends ChangeNotifier {
 
   /// Peer connection oluştur
   Future<void> _createPeerConnection() async {
+    debugPrint('WebRTC: Creating peer connection with ICE servers: $_iceServers');
     _peerConnection = await createPeerConnection(_iceServers);
 
     // Local tracks ekle
     _localStream?.getTracks().forEach((track) {
       _peerConnection!.addTrack(track, _localStream!);
+      debugPrint('WebRTC: Added local track: ${track.kind}');
     });
 
     // Remote stream handler
     _peerConnection!.onTrack = (event) {
+      debugPrint('WebRTC: onTrack event - streams: ${event.streams.length}');
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
         onRemoteStream?.call(_remoteStream!);
-        debugPrint('WebRTC: Remote stream received');
+        debugPrint('WebRTC: Remote stream received - tracks: ${_remoteStream?.getTracks().length}');
       }
     };
 
     // ICE candidate handler
     _peerConnection!.onIceCandidate = (candidate) {
+      debugPrint('WebRTC: ICE candidate generated: ${candidate.candidate?.substring(0, 50)}...');
       if (candidate.candidate != null && _currentCallId != null) {
         _sendIceCandidate(candidate);
       }
+    };
+    
+    // ICE connection state handler
+    _peerConnection!.onIceConnectionState = (state) {
+      debugPrint('WebRTC: ICE connection state: $state');
+    };
+    
+    // ICE gathering state handler
+    _peerConnection!.onIceGatheringState = (state) {
+      debugPrint('WebRTC: ICE gathering state: $state');
     };
 
     // Connection state handler
@@ -382,10 +466,12 @@ class WebRTCService extends ChangeNotifier {
       
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         // Bağlantı kuruldu
+        debugPrint('WebRTC: ✅ Connection established!');
         _updateCallConnected();
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
                  state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         // Bağlantı kesildi
+        debugPrint('WebRTC: ❌ Connection failed or disconnected');
         endCall(reason: 'connection_failed');
       }
     };
@@ -403,6 +489,7 @@ class WebRTCService extends ChangeNotifier {
         'sdp_mid': candidate.sdpMid,
         'sdp_m_line_index': candidate.sdpMLineIndex,
       });
+      debugPrint('WebRTC: ICE candidate sent to DB');
     } catch (e) {
       debugPrint('WebRTC: Error sending ICE candidate: $e');
     }
@@ -431,7 +518,8 @@ class WebRTCService extends ChangeNotifier {
           debugPrint('WebRTC: Call update - status: $status');
 
           if (status == 'connected' && _isCaller) {
-            // Caller: Answer geldi
+            // Caller: Answer geldi - timeout iptal et
+            _cancelCallTimeout();
             final answerSdp = call['answer_sdp'] as String?;
             if (answerSdp != null) {
               await _peerConnection?.setRemoteDescription(
@@ -441,11 +529,16 @@ class WebRTCService extends ChangeNotifier {
               debugPrint('WebRTC: Answer received and set');
             }
           } else if (status == 'rejected') {
+            _cancelCallTimeout();
             onCallRejected?.call();
             await endCall(reason: 'rejected');
           } else if (status == 'ended') {
+            _cancelCallTimeout();
             final endReason = call['end_reason'] as String? ?? 'ended';
             await endCall(reason: endReason);
+          } else if (status == 'missed') {
+            _cancelCallTimeout();
+            await endCall(reason: 'no_answer');
           }
         },
       )
@@ -456,6 +549,7 @@ class WebRTCService extends ChangeNotifier {
   void _subscribeToIceCandidates() {
     if (_currentCallId == null) return;
 
+    debugPrint('WebRTC: Subscribing to ICE candidates for call: $_currentCallId');
     _iceCandidateChannel = _supabase.client.channel('ice_$_currentCallId');
     
     _iceCandidateChannel!
@@ -472,8 +566,13 @@ class WebRTCService extends ChangeNotifier {
           final data = payload.newRecord;
           final senderId = data['sender_id'] as String?;
           
+          debugPrint('WebRTC: Received ICE candidate from: $senderId');
+          
           // Kendi gönderdiğimiz candidate'leri ignore et
-          if (senderId == currentUserId) return;
+          if (senderId == currentUserId) {
+            debugPrint('WebRTC: Ignoring own ICE candidate');
+            return;
+          }
 
           try {
             final candidate = RTCIceCandidate(
@@ -482,13 +581,15 @@ class WebRTCService extends ChangeNotifier {
               data['sdp_m_line_index'] as int?,
             );
             await _peerConnection?.addCandidate(candidate);
-            debugPrint('WebRTC: Remote ICE candidate added');
+            debugPrint('WebRTC: ✅ Remote ICE candidate added successfully');
           } catch (e) {
-            debugPrint('WebRTC: Error adding ICE candidate: $e');
+            debugPrint('WebRTC: ❌ Error adding ICE candidate: $e');
           }
         },
       )
-      .subscribe();
+      .subscribe((status, error) {
+        debugPrint('WebRTC: ICE candidates subscription status: $status, error: $error');
+      });
   }
 
   /// Call connected güncelle
@@ -506,6 +607,9 @@ class WebRTCService extends ChangeNotifier {
 
   /// Cleanup
   Future<void> _cleanup() async {
+    // Timer iptal
+    _cancelCallTimeout();
+    
     // Channels unsubscribe
     await _callChannel?.unsubscribe();
     await _iceCandidateChannel?.unsubscribe();
