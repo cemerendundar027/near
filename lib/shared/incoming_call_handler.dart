@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Gelen Arama İşleyici
 /// iOS'ta CallKit, Android'de custom notification kullanır
+/// macOS/Windows/Linux'ta sadece in-app notification kullanır
 class IncomingCallHandler {
   IncomingCallHandler._();
   static final IncomingCallHandler instance = IncomingCallHandler._();
@@ -14,6 +15,9 @@ class IncomingCallHandler {
   final _supabase = Supabase.instance.client;
   RealtimeChannel? _callChannel;
   bool _isInitialized = false;
+  
+  // Platform check
+  bool get _isMobile => Platform.isAndroid || Platform.isIOS;
   
   // Pending calls cache - callId -> call data
   final Map<String, Map<String, dynamic>> _pendingCalls = {};
@@ -28,16 +32,18 @@ class IncomingCallHandler {
 
   /// Handler'ı başlat
   Future<void> initialize() async {
-    // Önce bekleyen tüm aramaları temizle (eski/orphan calls)
-    try {
-      await FlutterCallkitIncoming.endAllCalls();
-    } catch (e) {
-      debugPrint('IncomingCallHandler: Error clearing old calls: $e');
-    }
+    // Önce bekleyen tüm aramaları temizle (eski/orphan calls) - only on mobile
+    if (_isMobile) {
+      try {
+        await FlutterCallkitIncoming.endAllCalls();
+      } catch (e) {
+        debugPrint('IncomingCallHandler: Error clearing old calls: $e');
+      }
 
-    // CallKit eventlerini dinle (sadece bir kez)
-    if (!_isInitialized) {
-      FlutterCallkitIncoming.onEvent.listen(_handleCallKitEvent);
+      // CallKit eventlerini dinle (sadece bir kez) - only on mobile
+      if (!_isInitialized) {
+        FlutterCallkitIncoming.onEvent.listen(_handleCallKitEvent);
+      }
     }
 
     // Supabase realtime'dan gelen aramaları dinle - sadece kullanıcı giriş yaptıysa
@@ -170,20 +176,27 @@ class IncomingCallHandler {
     _pendingCalls[callId] = callData;
 
     // Platform bazlı bildirim göster
-    if (Platform.isIOS) {
-      await _showCallKitNotification(
-        callId: callId,
-        callerName: callerName,
-        callerAvatar: callerAvatar,
-        isVideo: isVideo,
-      );
-    } else if (Platform.isAndroid) {
-      await _showAndroidCallNotification(
-        callId: callId,
-        callerName: callerName,
-        callerAvatar: callerAvatar,
-        isVideo: isVideo,
-      );
+    try {
+      if (Platform.isIOS) {
+        await _showCallKitNotification(
+          callId: callId,
+          callerName: callerName,
+          callerAvatar: callerAvatar,
+          isVideo: isVideo,
+        );
+      } else if (Platform.isAndroid) {
+        await _showAndroidCallNotification(
+          callId: callId,
+          callerName: callerName,
+          callerAvatar: callerAvatar,
+          isVideo: isVideo,
+        );
+      } else {
+        // Desktop (macOS, Windows, Linux) - just trigger callback directly
+        debugPrint('IncomingCallHandler: Desktop platform - triggering callback directly');
+      }
+    } catch (e) {
+      debugPrint('IncomingCallHandler: Error showing notification: $e');
     }
 
     // Callback'i çağır
@@ -314,9 +327,14 @@ class IncomingCallHandler {
           // Cache'den call data'yı al, yoksa DB'den çek
           var callData = _pendingCalls[callId];
           callData ??= await _getCallFromDb(callId);
+          
           if (callData != null) {
             _pendingCalls.remove(callId);
-            onCallAccepted?.call(callData);
+            if (_isInitialized) {
+                onCallAccepted?.call(callData);
+            } else {
+                debugPrint('IncomingCallHandler: Call accepted but handler disposed, ignored');
+            }
           }
         }
         break;
@@ -385,8 +403,10 @@ class IncomingCallHandler {
         })
         .eq('id', callId);
 
-      // Bildirimi kapat
-      await FlutterCallkitIncoming.endCall(callId);
+      // Bildirimi kapat (sadece mobil)
+      if (_isMobile) {
+        await FlutterCallkitIncoming.endCall(callId);
+      }
     } catch (e) {
       debugPrint('IncomingCallHandler: Error handling missed call: $e');
     }
@@ -394,24 +414,30 @@ class IncomingCallHandler {
 
   /// Aktif aramaları kontrol et (app başlangıcında)
   Future<List<dynamic>> getActiveCalls() async {
+    if (!_isMobile) return [];
     return await FlutterCallkitIncoming.activeCalls();
   }
 
   /// Tüm bildirimleri kapat
   Future<void> endAllCalls() async {
+    if (!_isMobile) return;
     await FlutterCallkitIncoming.endAllCalls();
   }
 
   /// Aramayı sonlandır
   Future<void> endCall(String callId) async {
+    if (!_isMobile) return;
     await FlutterCallkitIncoming.endCall(callId);
   }
 
   /// Temizle
   void dispose() {
+    _isInitialized = false;
     _callChannel?.unsubscribe();
+    _callChannel = null;
     _pendingCallsCheckTimer?.cancel();
     _pendingCallsCheckTimer = null;
-    _isInitialized = false;
+    _pendingCalls.clear();
+    debugPrint('IncomingCallHandler: Disposed');
   }
 }

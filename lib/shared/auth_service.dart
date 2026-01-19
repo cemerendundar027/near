@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
 import 'device_service.dart';
+import 'incoming_call_handler.dart';
 
 /// Authentication servisi - Supabase Auth ile entegre
 ///
@@ -43,11 +44,15 @@ class AuthService {
       if (event == AuthChangeEvent.signedIn) {
         // Login olduğunda device session kaydet
         _deviceService.saveDeviceSession();
-        debugPrint('AuthService: User signed in, session saved');
+        // Call handler'ı başlat
+        IncomingCallHandler.instance.restart();
+        debugPrint('AuthService: User signed in, session saved, call handler restarted');
       } else if (event == AuthChangeEvent.signedOut) {
         // Logout olduğunda session'ı temizle
         _deviceService.removeCurrentSession();
-        debugPrint('AuthService: User signed out, session removed');
+        // Call handler'ı durdur
+        IncomingCallHandler.instance.dispose();
+        debugPrint('AuthService: User signed out, session removed, call handler disposed');
       } else if (event == AuthChangeEvent.tokenRefreshed) {
         // Token yenilendiğinde aktiviteyi güncelle
         _deviceService.updateSessionActivity();

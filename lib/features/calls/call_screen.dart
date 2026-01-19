@@ -62,6 +62,11 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
   
   Future<void> _initializeAll() async {
+    // UI'ın oturması için kısa bir süre bekle (crash önleme)
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    if (!mounted) return;
+
     await _initRenderers();
     _setupCallbacks();
     _initCall();
@@ -199,9 +204,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           
           debugPrint('CallScreen: startCall returned callId: $callId');
           
+          
           if (callId == null) {
             debugPrint('CallScreen: startCall returned null, ending call');
             _handleCallEnded('error');
+          } else {
+             if (mounted) setState(() => _callStatus = 'ringing');
           }
         } catch (e) {
           debugPrint('CallScreen: startCall exception: $e');
@@ -316,7 +324,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         message = 'Cevap yok';
         break;
       case 'connection_failed':
-        message = 'Bağlantı hatası';
+        message = 'Bağlantı kurulamadı';
+        break;
+      case 'error':
+        message = 'Bir hata oluştu';
         break;
       case 'ended':
         message = 'Arama sonlandırıldı';
@@ -575,6 +586,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         return widget.isVideo ? 'Görüntülü Arama Geliyor...' : 'Sesli Arama Geliyor...';
       case 'calling':
         return 'Aranıyor...';
+      case 'ringing':
+        return 'Çalıyor...';
       case 'connecting':
         return 'Bağlanıyor...';
       case 'connected':
